@@ -1,0 +1,22 @@
+[Unit]
+Description=M4 Supra Electric Scooter Sound System
+After=multi-user.target sound.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/M4HCSUP
+ExecStart=/usr/bin/python3 /home/pi/M4HCSUP/m4_supra_v2.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+Environment="PYTHONUNBUFFERED=1"
+
+# Give the service access to audio and GPIO
+SupplementaryGroups=audio gpio spi
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,649 @@
+\n================================================================================
+M4/SUPRA SOUND SYSTEM LOG ANALYSIS REPORT
+================================================================================
+\nSESSION INFO:
+Duration: 224.8 seconds (3.7 minutes)
+Total log entries: 13413
+Car switches: 5
+Sound events: 52
+\nCAR USAGE:
+M4: 92.6s (41.2%)
+Supra: 132.2s (58.8%)
+\nSOUND EVENTS:
+M4 events: 22
+Supra events: 30
+\nANOMALIES DETECTED: 137
+By severity:
+  HIGH: 4
+  MEDIUM: 9
+  LOW: 124
+\nBy type:
+  M4_MISSING_ACCELERATION: 4
+  SUPRA_WRONG_THROTTLE_RANGE: 9
+  M4_MULTIPLE_CHANNELS: 124
+\nDETAILED ANOMALIES:
+--------------------------------------------------------------------------------
+  1. [MEDIUM] SUPRA_WRONG_THROTTLE_RANGE
+     Time: 1755401626.7s
+     Desc: Supra 'aggressive_push_2' played at 0.2% throttle (expected 31-60%)
+
+  2. [MEDIUM] SUPRA_WRONG_THROTTLE_RANGE
+     Time: 1755401631.8s
+     Desc: Supra 'violent_pull_3' played at 1.0% throttle (expected 61-100%)
+
+  3. [MEDIUM] SUPRA_WRONG_THROTTLE_RANGE
+     Time: 1755401647.3s
+     Desc: Supra 'light_cruise_1' played at 0.1% throttle (expected 10-30%)
+
+  4. [MEDIUM] SUPRA_WRONG_THROTTLE_RANGE
+     Time: 1755401676.6s
+     Desc: Supra 'violent_pull_3' played at 1.0% throttle (expected 61-100%)
+
+  5. [MEDIUM] SUPRA_WRONG_THROTTLE_RANGE
+     Time: 1755401687.1s
+     Desc: Supra 'light_cruise_2' played at 0.1% throttle (expected 10-30%)
+
+  6. [MEDIUM] SUPRA_WRONG_THROTTLE_RANGE
+     Time: 1755401698.8s
+     Desc: Supra 'violent_pull_3' played at 0.8% throttle (expected 61-100%)
+
+  7. [MEDIUM] SUPRA_WRONG_THROTTLE_RANGE
+     Time: 1755401714.4s
+     Desc: Supra 'violent_pull_1' played at 1.0% throttle (expected 61-100%)
+
+  8. [MEDIUM] SUPRA_WRONG_THROTTLE_RANGE
+     Time: 1755401723.3s
+     Desc: Supra 'light_cruise_1' played at 0.1% throttle (expected 10-30%)
+
+  9. [HIGH  ] M4_MISSING_ACCELERATION
+     Time: 1755401732.2s
+     Desc: M4 reached 100% throttle for 4.1s but no acceleration sound played
+
+ 10. [HIGH  ] M4_MISSING_ACCELERATION
+     Time: 1755401736.6s
+     Desc: M4 reached 100% throttle for 4.6s but no acceleration sound played
+
+ 11. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401741.3s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 12. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401741.3s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 13. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401741.3s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 14. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401741.4s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 15. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401741.4s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 16. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401741.4s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 17. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401741.4s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 18. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401741.4s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 19. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401741.4s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 20. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401741.5s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 21. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401741.5s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 22. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401741.5s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 23. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401741.5s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 24. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401741.5s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 25. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401741.5s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 26. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401741.6s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 27. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401741.6s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 28. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401741.6s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 29. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401741.6s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 30. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401741.6s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 31. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401741.6s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 32. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401741.7s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 33. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401741.7s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 34. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401741.7s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 35. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401741.7s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 36. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401741.7s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 37. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401741.7s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 38. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401741.8s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 39. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401741.8s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 40. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401741.8s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 41. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401741.8s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 42. [HIGH  ] M4_MISSING_ACCELERATION
+     Time: 1755401746.2s
+     Desc: M4 reached 100% throttle for 8.0s but no acceleration sound played
+
+ 43. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401746.2s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 44. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401746.2s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 45. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401746.2s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 46. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401746.3s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 47. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401746.3s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 48. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401746.3s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 49. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401746.3s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 50. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401746.3s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 51. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401746.3s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 52. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401746.4s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 53. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401746.4s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 54. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401746.4s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 55. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401746.4s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 56. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401746.4s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 57. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401746.5s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 58. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401746.5s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 59. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401746.5s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 60. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401746.5s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 61. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401746.5s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 62. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401746.5s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 63. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401746.6s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 64. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401746.6s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 65. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401746.6s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 66. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401746.6s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 67. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401746.6s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 68. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401746.6s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 69. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401746.7s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 70. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401746.7s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 71. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401746.7s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 72. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401746.7s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 73. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401746.7s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 74. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401754.2s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 75. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401754.2s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 76. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401754.3s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 77. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401754.3s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 78. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401754.3s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 79. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401754.3s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 80. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401754.3s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 81. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401754.3s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 82. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401754.4s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 83. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401754.4s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 84. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401754.4s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 85. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401754.4s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 86. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401754.4s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 87. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401754.4s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 88. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401754.5s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 89. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401754.5s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 90. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401754.5s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 91. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401754.5s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 92. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401754.5s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 93. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401754.5s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 94. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401754.6s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 95. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401754.6s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 96. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401754.6s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 97. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401754.6s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 98. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401754.6s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+ 99. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401754.6s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+100. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401754.7s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+101. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401754.7s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+102. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401754.7s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+103. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401754.7s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+104. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401754.7s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+105. [HIGH  ] M4_MISSING_ACCELERATION
+     Time: 1755401776.2s
+     Desc: M4 reached 100% throttle for 2.9s but no acceleration sound played
+
+106. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401779.1s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+107. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401779.1s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+108. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401779.1s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+109. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401779.2s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+110. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401779.2s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+111. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401779.2s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+112. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401779.2s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+113. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401779.2s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+114. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401779.2s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+115. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401779.3s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+116. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401779.3s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+117. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401779.3s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+118. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401779.3s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+119. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401779.3s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+120. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401779.3s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+121. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401779.4s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+122. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401779.4s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+123. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401779.4s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+124. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401779.4s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+125. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401779.4s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+126. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401779.4s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+127. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401779.5s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+128. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401779.5s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+129. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401779.5s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+130. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401779.5s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+131. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401779.5s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+132. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401779.6s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+133. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401779.6s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+134. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401779.6s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+135. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401779.6s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+136. [LOW   ] M4_MULTIPLE_CHANNELS
+     Time: 1755401779.6s
+     Desc: M4 multiple sound channels active: long_A, long_B
+
+137. [MEDIUM] SUPRA_WRONG_THROTTLE_RANGE
+     Time: 1755401808.3s
+     Desc: Supra 'violent_pull_3' played at 1.0% throttle (expected 61-100%)
+
+\nRECENT SOUND EVENTS (last 20):
+--------------------------------------------------------------------------------
+1755401741.3s [START] M4    long_A       decel_downshifts          (throttle:   0.8%, state: DECELERATING)
+1755401741.8s [STOP ] M4    long_B       accel_gears               (throttle:   0.0%, state: DECELERATING)
+1755401746.2s [START] M4    long_B       cruising                  (throttle:   1.0%, state: CRUISING)
+1755401746.7s [STOP ] M4    long_A       decel_downshifts          (throttle:   1.0%, state: CRUISING)
+1755401754.2s [START] M4    long_A       decel_downshifts          (throttle:   0.9%, state: DECELERATING)
+1755401754.7s [STOP ] M4    long_B       cruising                  (throttle:   0.0%, state: DECELERATING)
+1755401769.3s [STOP ] M4    long_A       decel_downshifts          (throttle:   0.5%, state: IDLING)
+1755401771.5s [START] M4    staged_rev   rev_stage3                (throttle:   0.0%, state: PLAYFUL_REV)
+1755401773.3s [STOP ] M4    staged_rev   rev_stage3                (throttle:   0.0%, state: IDLING)
+1755401777.7s [START] M4    long_B       cruising                  (throttle:   1.0%, state: CRUISING)
+1755401779.1s [START] M4    long_A       decel_downshifts          (throttle:   0.8%, state: DECELERATING)
+1755401779.6s [STOP ] M4    long_B       accel_gears               (throttle:   0.0%, state: DECELERATING)
+1755401794.2s [STOP ] M4    long_A       decel_downshifts          (throttle:   0.0%, state: IDLING)
+1755401794.4s [START] M4    staged_rev   rev_stage1                (throttle:   0.0%, state: PLAYFUL_REV)
+1755401797.4s [STOP ] M4    staged_rev   rev_stage1                (throttle:   0.0%, state: PLAYFUL_REV)
+1755401797.9s [STOP ] Supra driving_A    light_cruise_1            (throttle:   0.0%, state: ENGINE_OFF)
+1755401798.4s [START] Supra rev_sfx      startup                   (throttle:   0.2%, state: STARTING)
+1755401805.6s [STOP ] Supra rev_sfx      startup                   (throttle:   0.0%, state: IDLE)
+1755401808.3s [START] Supra driving_B    violent_pull_3            (throttle:   1.0%, state: DRIVING)
+1755401818.5s [STOP ] Supra driving_B    violent_pull_3            (throttle:   0.0%, state: ENDING_CLIP)
+\n\nFULL SOUND EVENT LOG:
+================================================================================
+1755401598.7s [START] M4    sfx          starter                   (throttle:   0.2%, state: STARTING)
+1755401604.1s [STOP ] M4    sfx          starter                   (throttle:   0.0%, state: IDLING)
+1755401617.7s [START] Supra rev_sfx      startup                   (throttle:   0.1%, state: STARTING)
+1755401624.9s [STOP ] Supra rev_sfx      startup                   (throttle:   0.0%, state: IDLE)
+1755401625.1s [START] Supra rev_sfx      rev_1                     (throttle:   0.0%, state: IDLE)
+1755401626.7s [START] Supra driving_B    aggressive_push_2         (throttle:   0.2%, state: DRIVING)
+1755401628.2s [STOP ] Supra rev_sfx      rev_1                     (throttle:   1.0%, state: DRIVING)
+1755401631.3s [STOP ] Supra driving_B    aggressive_push_2         (throttle:   1.0%, state: ENDING_CLIP)
+1755401631.8s [START] Supra driving_A    violent_pull_3            (throttle:   1.0%, state: DRIVING)
+1755401642.1s [STOP ] Supra driving_A    violent_pull_3            (throttle:   0.0%, state: ENDING_CLIP)
+1755401644.5s [START] Supra rev_sfx      rev_3                     (throttle:   0.0%, state: IDLE)
+1755401646.3s [STOP ] Supra rev_sfx      rev_3                     (throttle:   0.0%, state: IDLE)
+1755401647.3s [START] Supra driving_B    light_cruise_1            (throttle:   0.1%, state: DRIVING)
+1755401653.8s [STOP ] Supra driving_B    light_cruise_1            (throttle:   0.0%, state: DRIVING)
+1755401654.8s [START] M4    sfx          starter                   (throttle:   0.2%, state: STARTING)
+1755401660.2s [STOP ] M4    sfx          starter                   (throttle:   0.0%, state: STARTING)
+1755401660.9s [START] Supra rev_sfx      startup                   (throttle:   0.2%, state: STARTING)
+1755401668.1s [STOP ] Supra rev_sfx      startup                   (throttle:   0.0%, state: IDLE)
+1755401676.6s [START] Supra driving_A    violent_pull_3            (throttle:   1.0%, state: DRIVING)
+1755401686.9s [STOP ] Supra driving_A    violent_pull_3            (throttle:   0.3%, state: ENDING_CLIP)
+1755401687.1s [START] Supra driving_A    light_cruise_2            (throttle:   0.1%, state: DRIVING)
+1755401694.2s [STOP ] Supra driving_A    light_cruise_2            (throttle:   0.0%, state: ENDING_CLIP)
+1755401698.8s [START] Supra driving_B    violent_pull_3            (throttle:   0.8%, state: DRIVING)
+1755401709.1s [STOP ] Supra driving_B    violent_pull_3            (throttle:   0.0%, state: ENDING_CLIP)
+1755401710.6s [START] Supra rev_sfx      rev_1                     (throttle:   0.0%, state: IDLE)
+1755401713.7s [STOP ] Supra rev_sfx      rev_1                     (throttle:   0.0%, state: IDLE)
+1755401714.4s [START] Supra driving_A    violent_pull_1            (throttle:   1.0%, state: DRIVING)
+1755401723.2s [STOP ] Supra driving_A    violent_pull_1            (throttle:   0.9%, state: ENDING_CLIP)
+1755401723.3s [START] Supra driving_A    light_cruise_1            (throttle:   0.1%, state: DRIVING)
+1755401729.6s [START] M4    sfx          starter                   (throttle:   0.2%, state: STARTING)
+1755401735.0s [STOP ] M4    sfx          starter                   (throttle:   1.0%, state: IDLING)
+1755401738.1s [START] M4    long_B       cruising                  (throttle:   1.0%, state: CRUISING)
+1755401741.3s [START] M4    long_A       decel_downshifts          (throttle:   0.8%, state: DECELERATING)
+1755401741.8s [STOP ] M4    long_B       accel_gears               (throttle:   0.0%, state: DECELERATING)
+1755401746.2s [START] M4    long_B       cruising                  (throttle:   1.0%, state: CRUISING)
+1755401746.7s [STOP ] M4    long_A       decel_downshifts          (throttle:   1.0%, state: CRUISING)
+1755401754.2s [START] M4    long_A       decel_downshifts          (throttle:   0.9%, state: DECELERATING)
+1755401754.7s [STOP ] M4    long_B       cruising                  (throttle:   0.0%, state: DECELERATING)
+1755401769.3s [STOP ] M4    long_A       decel_downshifts          (throttle:   0.5%, state: IDLING)
+1755401771.5s [START] M4    staged_rev   rev_stage3                (throttle:   0.0%, state: PLAYFUL_REV)
+1755401773.3s [STOP ] M4    staged_rev   rev_stage3                (throttle:   0.0%, state: IDLING)
+1755401777.7s [START] M4    long_B       cruising                  (throttle:   1.0%, state: CRUISING)
+1755401779.1s [START] M4    long_A       decel_downshifts          (throttle:   0.8%, state: DECELERATING)
+1755401779.6s [STOP ] M4    long_B       accel_gears               (throttle:   0.0%, state: DECELERATING)
+1755401794.2s [STOP ] M4    long_A       decel_downshifts          (throttle:   0.0%, state: IDLING)
+1755401794.4s [START] M4    staged_rev   rev_stage1                (throttle:   0.0%, state: PLAYFUL_REV)
+1755401797.4s [STOP ] M4    staged_rev   rev_stage1                (throttle:   0.0%, state: PLAYFUL_REV)
+1755401797.9s [STOP ] Supra driving_A    light_cruise_1            (throttle:   0.0%, state: ENGINE_OFF)
+1755401798.4s [START] Supra rev_sfx      startup                   (throttle:   0.2%, state: STARTING)
+1755401805.6s [STOP ] Supra rev_sfx      startup                   (throttle:   0.0%, state: IDLE)
+1755401808.3s [START] Supra driving_B    violent_pull_3            (throttle:   1.0%, state: DRIVING)
+1755401818.5s [STOP ] Supra driving_B    violent_pull_3            (throttle:   0.0%, state: ENDING_CLIP)

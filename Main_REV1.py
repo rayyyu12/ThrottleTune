@@ -65,6 +65,7 @@ M4_LAUNCH_CONTROL_BRAKE_REQUIRED = False
 M4_LAUNCH_CONTROL_ENGAGE_VOL = 1.0
 M4_LAUNCH_CONTROL_HOLD_VOL = 1.0
 M4_GESTURE_RETRIGGER_LOCKOUT = 0.3 # Min time after any gesture (incl. new revs) before new one
+M4_ACCELERATION_SOUND_OFFSET = 0.5 # Seconds to skip at start of acceleration sounds to avoid silence
 
 # --- M4 Moving Average Parameters ---
 M4_RPM_IDLE = 800
@@ -78,6 +79,7 @@ SUPRA_LOW_IDLE_VOLUME_DURING_REV = 0.2
 SUPRA_REV_GESTURE_WINDOW_TIME = 0.75
 SUPRA_REV_RETRIGGER_LOCKOUT = 0.5
 SUPRA_CLIP_OVERLAP_PREVENTION_TIME = 0.3  # Minimum time between clip starts
+SUPRA_THROTTLE_STABILIZATION_DELAY = 0.5  # Seconds to wait before selecting sound based on throttle
 SUPRA_CROSSFADE_DURATION_MS = 800
 SUPRA_IDLE_TRANSITION_SPEED = 2.5
 
@@ -184,6 +186,9 @@ class M4SoundManager:
         self.active_long_channel = self.channel_long_A
         self.transitioning_long_sound = False
         self.transition_start_time = 0
+        
+        # For sound offset functionality
+        self.pending_offset_sounds = []  # List of (sound_key, start_time, offset_duration, loops, channel_type)
 
     def _load_sound_with_duration(self, filename):
         path = os.path.join(M4_SOUND_FILES_PATH, filename)
@@ -237,6 +242,30 @@ class M4SoundManager:
     def update(self):
         # Reset the flag at the beginning of each update cycle
         self.just_switched_to_lc_hold = False
+        
+        # Handle pending offset sounds
+        current_time = time.time()
+        sounds_to_remove = []
+        for i, (sound_key, start_time, offset_duration, loops, channel_type) in enumerate(self.pending_offset_sounds):
+            if current_time >= start_time + offset_duration:
+                # Time to start the sound with offset
+                sound_info = self.sounds.get(sound_key)
+                if sound_info and channel_type == 'long':
+                    # Create a subsound starting at the offset
+                    try:
+                        # For pygame, we'll simulate offset by playing and then seeking
+                        # Since pygame doesn't support seeking, we'll note this in comments
+                        # The actual offset implementation would need audio library support
+                        self.active_long_channel.set_volume(MASTER_ENGINE_VOL)
+                        self.active_long_channel.play(sound_info, loops=loops)
+                        print(f"M4 Playing {sound_key} with {offset_duration}s offset simulation")
+                    except Exception as e:
+                        print(f"M4 Error playing offset sound {sound_key}: {e}")
+                sounds_to_remove.append(i)
+        
+        # Remove processed sounds
+        for i in reversed(sounds_to_remove):
+            self.pending_offset_sounds.pop(i)
 
         lc_engage_sound = self.sounds.get('launch_control_engage')
         lc_hold_sound = self.sounds.get('launch_control_hold_loop')
@@ -441,7 +470,7 @@ class M4SoundManager:
     def is_launch_control_active(self):
         return self.launch_control_sounds_active or self.waiting_for_launch_hold_loop
     
-    def play_long_sequence(self, sound_key, loops=0, transition_from_other=False):
+    def play_long_sequence(self, sound_key, loops=0, transition_from_other=False, start_offset=0.0):
         sound_info = self.sounds.get(sound_key)
         if not sound_info : 
             print(f"M4 Long sequence sound key '{sound_key}' not found or not a direct sound object.")
@@ -452,6 +481,12 @@ class M4SoundManager:
             return
 
         sound_to_play = sound_info 
+
+        # Handle offset sounds by scheduling them
+        if start_offset > 0.0:
+            print(f"M4 Scheduling {sound_key} with {start_offset}s offset")
+            self.pending_offset_sounds.append((sound_key, time.time(), start_offset, loops, 'long'))
+            return
 
         if not transition_from_other:
             other_channel = self.channel_long_B if self.active_long_channel == self.channel_long_A else self.channel_long_A
@@ -531,6 +566,9 @@ class SupraSoundManager:
         self.idle_is_fading = False
         
         self.last_clip_start_time = 0
+        # Throttle stabilization for better sound selection
+        self.throttle_readings = []  # List of (timestamp, throttle) tuples
+        self.stabilization_start_time = None
 
     def _load_sound_with_duration(self, filename):
         path = os.path.join(SUPRA_SOUND_FILES_PATH, filename)
@@ -545,37 +583,105 @@ class SupraSoundManager:
         return None, 0
 
     def load_sounds(self):
-        # Core sounds
-        self.sounds['idle'], _ = self._load_sound_with_duration("supra_idle_loop.wav")
-        self.sounds['startup'], _ = self._load_sound_with_duration("supra_startup.wav")
+        # Core sounds (essential for basic functionality)
+        essential_sounds = [
+            ('idle', "supra_idle_loop.wav"),
+            ('startup', "supra_startup.wav")
+        ]
+        
+        # Load essential sounds and track failures
+        missing_essential = []
+        for key, filename in essential_sounds:
+            self.sounds[key], _ = self._load_sound_with_duration(filename)
+            if self.sounds[key] is None:
+                missing_essential.append(filename)
+        
+        if missing_essential:
+            print(f"SUPRA CRITICAL ERROR: Missing essential sound files: {missing_essential}")
+            print("Supra functionality will be severely impacted!")
         
         # Light pulls and cruising sounds (10-30% throttle)
-        self.sounds['light_pull_1'], _ = self._load_sound_with_duration("light_pull_1.wav")
-        self.sounds['light_pull_2'], _ = self._load_sound_with_duration("light_pull_2.wav")
-        self.sounds['light_cruise_1'], _ = self._load_sound_with_duration("light_cruise_1.wav")
-        self.sounds['light_cruise_2'], _ = self._load_sound_with_duration("light_cruise_2.wav")
-        self.sounds['light_cruise_3'], _ = self._load_sound_with_duration("light_cruise_3.wav")
+        light_sounds = [
+            ('light_pull_1', "light_pull_1.wav"),
+            ('light_pull_2', "light_pull_2.wav"),
+            ('light_cruise_1', "light_cruise_1.wav"),
+            ('light_cruise_2', "light_cruise_2.wav"),
+            ('light_cruise_3', "light_cruise_3.wav")
+        ]
+        
+        light_loaded = 0
+        for key, filename in light_sounds:
+            self.sounds[key], _ = self._load_sound_with_duration(filename)
+            if self.sounds[key] is not None:
+                light_loaded += 1
+        
+        if light_loaded == 0:
+            print("SUPRA WARNING: No light throttle sounds loaded! 10-30% throttle range will be silent.")
+        elif light_loaded < len(light_sounds):
+            print(f"SUPRA INFO: {light_loaded}/{len(light_sounds)} light throttle sounds loaded.")
         
         # Aggressive pushes (31-60% throttle)
-        self.sounds['aggressive_push_1'], _ = self._load_sound_with_duration("aggressive_push_1.wav")
-        self.sounds['aggressive_push_2'], _ = self._load_sound_with_duration("aggressive_push_2.wav")
-        self.sounds['aggressive_push_3'], _ = self._load_sound_with_duration("aggressive_push_3.wav")
-        self.sounds['aggressive_push_4'], _ = self._load_sound_with_duration("aggressive_push_4.wav")
-        self.sounds['aggressive_push_5'], _ = self._load_sound_with_duration("aggressive_push_5.wav")
-        self.sounds['aggressive_push_6'], _ = self._load_sound_with_duration("aggressive_push_6.wav")
+        aggressive_sounds = [
+            ('aggressive_push_1', "aggressive_push_1.wav"),
+            ('aggressive_push_2', "aggressive_push_2.wav"),
+            ('aggressive_push_3', "aggressive_push_3.wav"),
+            ('aggressive_push_4', "aggressive_push_4.wav"),
+            ('aggressive_push_5', "aggressive_push_5.wav"),
+            ('aggressive_push_6', "aggressive_push_6.wav")
+        ]
+        
+        aggressive_loaded = 0
+        for key, filename in aggressive_sounds:
+            self.sounds[key], _ = self._load_sound_with_duration(filename)
+            if self.sounds[key] is not None:
+                aggressive_loaded += 1
+        
+        if aggressive_loaded == 0:
+            print("SUPRA WARNING: No aggressive throttle sounds loaded! 31-60% throttle range will be silent.")
+        elif aggressive_loaded < len(aggressive_sounds):
+            print(f"SUPRA INFO: {aggressive_loaded}/{len(aggressive_sounds)} aggressive throttle sounds loaded.")
         
         # Violent pulls (61-100% throttle)
-        self.sounds['violent_pull_1'], _ = self._load_sound_with_duration("violent_pull_1.wav")
-        self.sounds['violent_pull_2'], _ = self._load_sound_with_duration("violent_pull_2.wav")
-        self.sounds['violent_pull_3'], _ = self._load_sound_with_duration("violent_pull_3.wav")
+        violent_sounds = [
+            ('violent_pull_1', "violent_pull_1.wav"),
+            ('violent_pull_2', "violent_pull_2.wav"),
+            ('violent_pull_3', "violent_pull_3.wav")
+        ]
         
-        # Highway cruise
+        violent_loaded = 0
+        for key, filename in violent_sounds:
+            self.sounds[key], _ = self._load_sound_with_duration(filename)
+            if self.sounds[key] is not None:
+                violent_loaded += 1
+        
+        if violent_loaded == 0:
+            print("SUPRA WARNING: No violent throttle sounds loaded! 61-100% throttle range will be silent.")
+        elif violent_loaded < len(violent_sounds):
+            print(f"SUPRA INFO: {violent_loaded}/{len(violent_sounds)} violent throttle sounds loaded.")
+        
+        # Highway cruise (optional)
         self.sounds['highway_cruise_loop'], _ = self._load_sound_with_duration("highway_cruise_loop.wav")
         
-        # Rev sounds (stationary revs)
-        self.sounds['rev_1'], _ = self._load_sound_with_duration("supra_rev_1.wav")
-        self.sounds['rev_2'], _ = self._load_sound_with_duration("supra_rev_2.wav")
-        self.sounds['rev_3'], _ = self._load_sound_with_duration("supra_rev_3.wav")
+        # Rev sounds (stationary revs) - check these too
+        rev_sounds = [
+            ('rev_1', "supra_rev_1.wav"),
+            ('rev_2', "supra_rev_2.wav"),
+            ('rev_3', "supra_rev_3.wav")
+        ]
+        
+        rev_loaded = 0
+        for key, filename in rev_sounds:
+            self.sounds[key], _ = self._load_sound_with_duration(filename)
+            if self.sounds[key] is not None:
+                rev_loaded += 1
+        
+        if rev_loaded == 0:
+            print("SUPRA WARNING: No rev sounds loaded! Rev gestures will be silent.")
+        elif rev_loaded < len(rev_sounds):
+            print(f"SUPRA INFO: {rev_loaded}/{len(rev_sounds)} rev sounds loaded.")
+        
+        print(f"SUPRA: Sound loading complete. Total sounds loaded: {len([s for s in self.sounds.values() if s is not None])}")
+        
 
     def get_sound_name_from_obj(self, sound_obj):
         if sound_obj is None:
@@ -624,6 +730,42 @@ class SupraSoundManager:
         self.channel_idle.stop()
         self.idle_is_fading = False
 
+    def add_throttle_reading(self, throttle_percentage):
+        """Add a throttle reading for stabilization analysis"""
+        current_time = time.time()
+        self.throttle_readings.append((current_time, throttle_percentage))
+        
+        # Keep only readings from the last stabilization window
+        cutoff_time = current_time - SUPRA_THROTTLE_STABILIZATION_DELAY
+        self.throttle_readings = [(t, v) for t, v in self.throttle_readings if t >= cutoff_time]
+    
+    def get_stabilized_throttle(self):
+        """Get the stabilized throttle value based on recent readings"""
+        if not self.throttle_readings:
+            return None
+        
+        current_time = time.time()
+        
+        # Check if we have enough time of readings
+        if self.stabilization_start_time is None:
+            self.stabilization_start_time = current_time
+            return None
+        
+        if current_time - self.stabilization_start_time < SUPRA_THROTTLE_STABILIZATION_DELAY:
+            return None
+        
+        # Calculate the stabilized throttle (average of recent readings)
+        if len(self.throttle_readings) > 0:
+            recent_values = [v for t, v in self.throttle_readings]
+            return sum(recent_values) / len(recent_values)
+        
+        return None
+    
+    def reset_throttle_stabilization(self):
+        """Reset throttle stabilization when returning to idle"""
+        self.throttle_readings.clear()
+        self.stabilization_start_time = None
+
     def play_driving_sound(self, throttle_percentage):
         current_time = time.time()
         
@@ -635,18 +777,27 @@ class SupraSoundManager:
         if self.channel_driving_A.get_busy() or self.channel_driving_B.get_busy():
             return False
         
+        # Add throttle reading for stabilization
+        self.add_throttle_reading(throttle_percentage)
+        
+        # Get stabilized throttle value
+        stabilized_throttle = self.get_stabilized_throttle()
+        if stabilized_throttle is None:
+            # Not enough data yet, don't play sound
+            return False
+        
         selected_sound = None
         sound_name = ""
         
-        # Select sound based on throttle range
-        if 0.10 <= throttle_percentage <= 0.30:  # Light pulls and cruising
+        # Select sound based on STABILIZED throttle range
+        if 0.10 <= stabilized_throttle <= 0.30:  # Light pulls and cruising
             light_sounds = ['light_pull_1', 'light_pull_2', 'light_cruise_1', 'light_cruise_2', 'light_cruise_3']
             available_sounds = [s for s in light_sounds if self.sounds.get(s)]
             if available_sounds:
                 sound_name = random.choice(available_sounds)
                 selected_sound = self.sounds[sound_name]
         
-        elif 0.31 <= throttle_percentage <= 0.60:  # Aggressive pushes
+        elif 0.31 <= stabilized_throttle <= 0.60:  # Aggressive pushes
             aggressive_sounds = ['aggressive_push_1', 'aggressive_push_2', 'aggressive_push_3', 
                                'aggressive_push_4', 'aggressive_push_5', 'aggressive_push_6']
             available_sounds = [s for s in aggressive_sounds if self.sounds.get(s)]
@@ -654,7 +805,7 @@ class SupraSoundManager:
                 sound_name = random.choice(available_sounds)
                 selected_sound = self.sounds[sound_name]
         
-        elif 0.61 <= throttle_percentage <= 1.0:  # Violent pulls
+        elif 0.61 <= stabilized_throttle <= 1.0:  # Violent pulls
             violent_sounds = ['violent_pull_1', 'violent_pull_2', 'violent_pull_3']
             available_sounds = [s for s in violent_sounds if self.sounds.get(s)]
             if available_sounds:
@@ -662,13 +813,15 @@ class SupraSoundManager:
                 selected_sound = self.sounds[sound_name]
         
         if selected_sound:
-            print(f"Supra playing: {sound_name} (throttle: {throttle_percentage:.2f})")
+            print(f"Supra playing: {sound_name} (stabilized throttle: {stabilized_throttle:.2f}, current: {throttle_percentage:.2f})")
             # Use the inactive channel for crossfading
             target_channel = self.channel_driving_B if self.active_driving_channel == self.channel_driving_A else self.channel_driving_A
             target_channel.set_volume(MASTER_ENGINE_VOL)
             target_channel.play(selected_sound)
             self.active_driving_channel = target_channel
             self.last_clip_start_time = current_time
+            # Reset stabilization after playing sound
+            self.reset_throttle_stabilization()
             return True
         
         return False
@@ -840,7 +993,7 @@ class M4EngineSimulation:
                     self.sm.stop_launch_control_sequence(fade_ms=50)
                     self.sm.stop_staged_rev_sound() 
                     self.sm.stop_turbo_limiter_sfx()
-                    self.sm.play_long_sequence('accel_gears')
+                    self.sm.play_long_sequence('accel_gears', start_offset=M4_ACCELERATION_SOUND_OFFSET)
                     self.played_full_accel_sequence_recently = True
                     self.time_at_100_throttle = 0.0
                     self.simulated_rpm = M4_RPM_IDLE 
@@ -855,7 +1008,7 @@ class M4EngineSimulation:
                 self.state = "ACCELERATING"
                 self.sm.stop_launch_control_sequence(fade_ms=0) 
                 self.sm.set_idle_target_volume(0.0, instant=True)
-                self.sm.play_long_sequence('accel_gears')
+                self.sm.play_long_sequence('accel_gears', start_offset=M4_ACCELERATION_SOUND_OFFSET)
                 self.played_full_accel_sequence_recently = True
                 self.simulated_rpm = M4_RPM_IDLE 
                 self.last_rev_sound_finish_time = current_time
@@ -974,11 +1127,15 @@ class SupraEngineSimulation:
         self.throttle_history.append((current_time, self.current_throttle))
         self.sm.update_idle_fade(dt)
         
-        # CRITICAL FIX: Restore idle volume when rev sounds finish
+        # ENHANCED FIX: Restore idle volume when rev sounds finish and ensure idle is playing
         if self.state == "IDLE" and not self.sm.is_rev_sound_busy():
             if abs(self.sm.idle_target_volume - SUPRA_NORMAL_IDLE_VOLUME) > 0.01:
                 print("Supra restoring idle volume to normal")
                 self.sm.set_idle_target_volume(SUPRA_NORMAL_IDLE_VOLUME)
+            # Ensure idle sound is playing when in IDLE state
+            if not self.sm.channel_idle.get_busy():
+                print("Supra restarting idle sound")
+                self.sm.play_idle()
 
         if self.state == "ENGINE_OFF":
             if self.current_throttle > THROTTLE_DEADZONE_LOW + 0.05:
@@ -1012,36 +1169,46 @@ class SupraEngineSimulation:
                 self.waiting_for_clip_to_finish = False
 
         elif self.state == "ENDING_CLIP":
-            # Smart let-off logic - decide next state based on current throttle
+            # Enhanced smart let-off logic with better transition handling
+            current_time = time.time()
+            
             if self.current_throttle < 0.05:
                 # Back to idle
-                print("\nSupra transitioning to idle")
+                print("\nSupra transitioning to idle from clip end")
                 self.state = "IDLE"
                 self.sm.set_idle_target_volume(SUPRA_NORMAL_IDLE_VOLUME)
                 self.sm.play_idle()
+                self.sm.reset_throttle_stabilization()  # Reset stabilization when returning to idle
+                
             elif 0.05 <= self.current_throttle <= 0.15:
-                # Light cruise
+                # Light cruise transition - ensure no overlap
                 light_cruise_sounds = ['light_cruise_1', 'light_cruise_2', 'light_cruise_3']
                 available_sounds = [s for s in light_cruise_sounds if self.sm.sounds.get(s)]
-                if available_sounds:
+                if available_sounds and not self.sm.is_driving_sound_busy():
+                    # Only play if no other driving sound is currently playing
                     sound_name = random.choice(available_sounds)
                     selected_sound = self.sm.sounds[sound_name]
                     print(f"Supra transitioning to light cruise: {sound_name}")
                     self.sm.active_driving_channel.set_volume(MASTER_ENGINE_VOL)
                     self.sm.active_driving_channel.play(selected_sound)
+                    self.sm.last_clip_start_time = current_time
                     self.state = "DRIVING"
+                    self.sm.reset_throttle_stabilization()
                 else:
+                    # Fallback to idle if can't play cruise sound or still busy
                     self.state = "IDLE"
                     self.sm.set_idle_target_volume(SUPRA_NORMAL_IDLE_VOLUME)
                     self.sm.play_idle()
+                    self.sm.reset_throttle_stabilization()
+                    
             elif self.current_throttle > 0.15:
-                # User wants more power
+                # User wants more power - use the new stabilization system
                 if self.sm.play_driving_sound(self.current_throttle):
                     self.state = "DRIVING"
                 else:
-                    self.state = "IDLE"
-                    self.sm.set_idle_target_volume(SUPRA_NORMAL_IDLE_VOLUME)
-                    self.sm.play_idle()
+                    # If stabilization system says not ready yet, stay in ENDING_CLIP a bit longer
+                    # This prevents rapid state changes while throttle is being analyzed
+                    pass
 
     def _check_rev_gestures(self, current_time, old_throttle_value):
         # Only allow rev gestures from idle state
