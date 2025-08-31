@@ -678,37 +678,39 @@ class SupraSoundManager:
         
         # Determine sound type if not forced
         if sound_type is None:
-            if throttle_range == 'highway':
-                sound_type = 'highway_cruise'
-            else:
-                sound_type = 'pull'  # Default to pull for initial acceleration
+            sound_type = 'pull'  # Default to pull for initial acceleration
         
         # Select appropriate sound based on range and type
-        if throttle_range == 'highway' and sound_type == 'highway_cruise':
+        if sound_type == 'highway_cruise':
+            # Special case: Highway cruise uses dedicated highway_cruise_loop.wav
             if self.sounds.get('highway_cruise_loop'):
                 selected_sound = self.sounds['highway_cruise_loop']
                 sound_name = 'highway_cruise_loop'
-        
-        elif throttle_range == 'light':
-            if sound_type == 'cruise':
+                
+        elif sound_type == 'cruise':
+            # Regular cruise uses light_cruise files for light range ONLY
+            if throttle_range == 'light':
                 available_sounds = [s for s in self.light_cruise_sounds if self.sounds.get(s)]
-            else:  # pull/push
+                if available_sounds:
+                    sound_name = random.choice(available_sounds)
+                    selected_sound = self.sounds[sound_name]
+            else:
+                # For non-light ranges, there's no separate cruise - use highway if at highway range
+                if throttle_range == 'highway' and self.sounds.get('highway_cruise_loop'):
+                    selected_sound = self.sounds['highway_cruise_loop']
+                    sound_name = 'highway_cruise_loop'
+                    sound_type = 'highway_cruise'  # Update type
+                
+        else:  # pull/push sounds
+            if throttle_range == 'light':
                 available_sounds = [s for s in self.light_pull_sounds if self.sounds.get(s)]
+            elif throttle_range == 'aggressive':
+                available_sounds = [s for s in self.aggressive_push_sounds if self.sounds.get(s)]
+            elif throttle_range == 'violent' or throttle_range == 'highway':
+                available_sounds = [s for s in self.violent_pull_sounds if self.sounds.get(s)]
+            else:
+                available_sounds = []
             
-            if available_sounds:
-                sound_name = random.choice(available_sounds)
-                selected_sound = self.sounds[sound_name]
-        
-        elif throttle_range == 'aggressive':
-            # For aggressive range, always use push sounds (no separate cruise yet)
-            available_sounds = [s for s in self.aggressive_push_sounds if self.sounds.get(s)]
-            if available_sounds:
-                sound_name = random.choice(available_sounds)
-                selected_sound = self.sounds[sound_name]
-        
-        elif throttle_range == 'violent':
-            # For violent range, always use pull sounds (no separate cruise yet)
-            available_sounds = [s for s in self.violent_pull_sounds if self.sounds.get(s)]
             if available_sounds:
                 sound_name = random.choice(available_sounds)
                 selected_sound = self.sounds[sound_name]
