@@ -89,6 +89,7 @@ SLIDER_WIDTH = 400
 # Global variables
 running_simulation = True
 log_data = []
+supra_debug_log = []  # Detailed Supra debugging log
 
 class M4SoundManager:
     def __init__(self):
@@ -620,41 +621,93 @@ class SupraSoundManager:
 
     def add_throttle_reading(self, throttle_percentage):
         """Add throttle reading and track stability"""
+        global supra_debug_log
         current_time = time.time()
         self.recent_throttle_readings.append((current_time, throttle_percentage))
         
         # Check if throttle changed significantly
         if len(self.recent_throttle_readings) >= 2:
             prev_throttle = self.recent_throttle_readings[-2][1]
-            if abs(throttle_percentage - prev_throttle) > SUPRA_THROTTLE_STABILITY_THRESHOLD:
+            throttle_change = abs(throttle_percentage - prev_throttle)
+            if throttle_change > SUPRA_THROTTLE_STABILITY_THRESHOLD:
                 self.last_throttle_change_time = current_time
+                supra_debug_log.append({
+                    'timestamp': current_time,
+                    'event_type': 'THROTTLE_CHANGE',
+                    'slider_position': throttle_percentage,
+                    'prev_position': prev_throttle,
+                    'change_amount': throttle_change,
+                    'details': f'Significant change detected: {prev_throttle:.3f} -> {throttle_percentage:.3f}'
+                })
     
     def is_throttle_stable(self):
         """Check if throttle has been stable for the required duration"""
+        global supra_debug_log
         current_time = time.time()
         
         if self.last_throttle_change_time is None:
+            supra_debug_log.append({
+                'timestamp': current_time,
+                'event_type': 'STABILITY_CHECK',
+                'slider_position': self.recent_throttle_readings[-1][1] if self.recent_throttle_readings else 0,
+                'stable': False,
+                'details': 'No throttle change time recorded yet'
+            })
             return False
         
         # Check if enough time has passed since last significant change
         time_since_change = current_time - self.last_throttle_change_time
         if time_since_change < SUPRA_THROTTLE_STABILIZATION_DELAY:
+            supra_debug_log.append({
+                'timestamp': current_time,
+                'event_type': 'STABILITY_CHECK',
+                'slider_position': self.recent_throttle_readings[-1][1] if self.recent_throttle_readings else 0,
+                'stable': False,
+                'details': f'Waiting for stability: {time_since_change:.2f}s / {SUPRA_THROTTLE_STABILIZATION_DELAY}s'
+            })
             return False
         
         # Verify throttle is actually stable by checking recent readings
         if len(self.recent_throttle_readings) < 5:
+            supra_debug_log.append({
+                'timestamp': current_time,
+                'event_type': 'STABILITY_CHECK',
+                'slider_position': self.recent_throttle_readings[-1][1] if self.recent_throttle_readings else 0,
+                'stable': False,
+                'details': f'Not enough readings: {len(self.recent_throttle_readings)} / 5'
+            })
             return False
         
         recent_values = [reading[1] for reading in list(self.recent_throttle_readings)[-5:]]
         throttle_range = max(recent_values) - min(recent_values)
+        is_stable = throttle_range <= SUPRA_THROTTLE_STABILITY_THRESHOLD
         
-        return throttle_range <= SUPRA_THROTTLE_STABILITY_THRESHOLD
+        current_throttle = self.recent_throttle_readings[-1][1]
+        supra_debug_log.append({
+            'timestamp': current_time,
+            'event_type': 'STABILITY_CHECK',
+            'slider_position': current_throttle,
+            'stable': is_stable,
+            'details': f'Range variation: {throttle_range:.4f}, threshold: {SUPRA_THROTTLE_STABILITY_THRESHOLD}, time_stable: {time_since_change:.2f}s'
+        })
+        
+        return is_stable
     
     def get_stable_throttle_range(self, current_throttle):
         """Get throttle range only if throttle is stable"""
+        global supra_debug_log
         if not self.is_throttle_stable():
             return None
-        return self.get_throttle_range(current_throttle)
+        
+        throttle_range = self.get_throttle_range(current_throttle)
+        supra_debug_log.append({
+            'timestamp': time.time(),
+            'event_type': 'STABLE_RANGE_SELECTED',
+            'slider_position': current_throttle,
+            'selected_range': throttle_range,
+            'details': f'Throttle stable at {current_throttle:.3f}, selected range: {throttle_range}'
+        })
+        return throttle_range
     
     def reset_throttle_stabilization(self):
         self.recent_throttle_readings.clear()
@@ -675,13 +728,28 @@ class SupraSoundManager:
     
     def play_driving_sound(self, throttle_percentage, force_type=None, crossfade=False):
         """Play appropriate driving sound based on throttle and context"""
+        global supra_debug_log
         current_time = time.time()
         
         # Check if we can play (unless crossfading)
         if not crossfade:
             if current_time - self.last_clip_start_time < SUPRA_CLIP_OVERLAP_PREVENTION_TIME:
+                supra_debug_log.append({
+                    'timestamp': current_time,
+                    'event_type': 'AUDIO_BLOCKED',
+                    'slider_position': throttle_percentage,
+                    'reason': 'OVERLAP_PREVENTION',
+                    'details': f'Too soon since last clip: {current_time - self.last_clip_start_time:.2f}s < {SUPRA_CLIP_OVERLAP_PREVENTION_TIME}s'
+                })
                 return False
             if self.channel_driving_A.get_busy() or self.channel_driving_B.get_busy():
+                supra_debug_log.append({
+                    'timestamp': current_time,
+                    'event_type': 'AUDIO_BLOCKED',
+                    'slider_position': throttle_percentage,
+                    'reason': 'CHANNELS_BUSY',
+                    'details': f'Driving channels busy: A={self.channel_driving_A.get_busy()}, B={self.channel_driving_B.get_busy()}'
+                })
                 return False
         
         throttle_range = self.get_throttle_range(throttle_percentage)
@@ -732,6 +800,18 @@ class SupraSoundManager:
         if selected_sound:
             target_channel = self.channel_driving_B if self.active_driving_channel == self.channel_driving_A else self.channel_driving_A
             
+            # Log audio event
+            supra_debug_log.append({
+                'timestamp': current_time,
+                'event_type': 'AUDIO_TRIGGERED',
+                'slider_position': throttle_percentage,
+                'sound_file': sound_name,
+                'sound_type': sound_type,
+                'throttle_range': throttle_range,
+                'crossfade': crossfade,
+                'details': f'Playing {sound_name} ({sound_type}) for {throttle_range} range'
+            })
+            
             if crossfade:
                 # Crossfade implementation
                 fade_out_channel = self.active_driving_channel
@@ -763,6 +843,16 @@ class SupraSoundManager:
             self.last_clip_start_time = current_time
             
             return True
+        else:
+            # Log when no sound could be played
+            supra_debug_log.append({
+                'timestamp': current_time,
+                'event_type': 'AUDIO_FAILED',
+                'slider_position': throttle_percentage,
+                'sound_type': sound_type or 'unknown',
+                'throttle_range': throttle_range,
+                'details': f'No sound available for {sound_type} in {throttle_range} range'
+            })
         
         return False
 
@@ -1155,7 +1245,17 @@ class SupraEngineSimulation:
                 self.sm.play_idle()
 
         elif self.state == "IDLE":
+            global supra_debug_log
             self._check_rev_gestures(current_time, previous_throttle)
+            
+            # Always log current slider position
+            supra_debug_log.append({
+                'timestamp': current_time,
+                'event_type': 'IDLE_UPDATE',
+                'slider_position': self.current_throttle,
+                'engine_state': self.state,
+                'details': f'In IDLE state, throttle at {self.current_throttle:.3f}'
+            })
             
             # Transition from idle when throttle is applied AND STABLE
             if self.current_throttle >= 0.10:
@@ -1165,15 +1265,39 @@ class SupraEngineSimulation:
                 # Only transition if throttle is stable
                 stable_range = self.sm.get_stable_throttle_range(self.current_throttle)
                 if stable_range and stable_range != 'idle' and not self.sm.is_driving_sound_busy():
+                    supra_debug_log.append({
+                        'timestamp': current_time,
+                        'event_type': 'STATE_CHANGE',
+                        'slider_position': self.current_throttle,
+                        'from_state': 'IDLE',
+                        'to_state': 'PULL',
+                        'selected_range': stable_range,
+                        'details': f'IDLE -> PULL transition at {self.current_throttle:.3f} (range: {stable_range})'
+                    })
+                    
                     if self.sm.play_driving_sound(self.current_throttle, force_type='pull'):
                         self.state = "PULL"
                         self.range_when_pull_started = stable_range
                         self.pull_start_time = current_time
                         self.sm.set_idle_target_volume(0.0)
                         print(f"\nSupra IDLE -> PULL ({stable_range} range) at {self.current_throttle:.2f} (waited for stability)")
+                elif stable_range is None:
+                    supra_debug_log.append({
+                        'timestamp': current_time,
+                        'event_type': 'TRANSITION_BLOCKED',
+                        'slider_position': self.current_throttle,
+                        'reason': 'THROTTLE_NOT_STABLE',
+                        'details': f'Throttle at {self.current_throttle:.3f} but not stable enough for transition'
+                    })
             else:
                 # Reset stabilization when back at idle throttle
                 self.sm.reset_throttle_stabilization()
+                supra_debug_log.append({
+                    'timestamp': current_time,
+                    'event_type': 'THROTTLE_RESET',
+                    'slider_position': self.current_throttle,
+                    'details': f'Throttle below 10%, reset stabilization'
+                })
 
         elif self.state == "PULL":
             self._handle_driving_state(current_time, "PULL")
@@ -1515,7 +1639,10 @@ class ThrottleSimulatorGUI:
             self.dual_car_system.switch_car()
 
     def simulation_loop(self):
+        global supra_debug_log
         last_time = time.time()
+        throttle_log_interval = 0.1  # Log throttle every 100ms
+        last_throttle_log_time = 0
         
         while self.running:
             current_time = time.time()
@@ -1526,6 +1653,20 @@ class ThrottleSimulatorGUI:
             
             # Get throttle value (convert from 0-100 to 0-1)
             raw_throttle = self.throttle_value.get() / 100.0
+            
+            # Log throttle position periodically for Supra
+            if (self.dual_car_system and self.dual_car_system.current_car == "Supra" and 
+                current_time - last_throttle_log_time >= throttle_log_interval):
+                
+                active_engine = self.dual_car_system.get_active_engine()
+                supra_debug_log.append({
+                    'timestamp': current_time,
+                    'event_type': 'THROTTLE_POSITION',
+                    'slider_position': raw_throttle,
+                    'engine_state': active_engine.state if active_engine else 'UNKNOWN',
+                    'details': f'Slider at {raw_throttle:.3f} ({raw_throttle*100:.1f}%), Engine: {active_engine.state if active_engine else "UNKNOWN"}'
+                })
+                last_throttle_log_time = current_time
             
             # Update the dual car system
             if self.dual_car_system:
@@ -1553,9 +1694,48 @@ class ThrottleSimulatorGUI:
                 self.rpm_label.config(text="Simulated RPM: N/A")
 
     def on_closing(self):
-        global running_simulation
+        global running_simulation, supra_debug_log
         running_simulation = False
         self.stop_simulation()
+        
+        # Write debug log to CSV file
+        if supra_debug_log:
+            import csv
+            import datetime
+            
+            log_filename = f"supra_debug_log_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            
+            print(f"\nWriting debug log to {log_filename}...")
+            
+            try:
+                with open(log_filename, 'w', newline='') as csvfile:
+                    fieldnames = ['timestamp', 'event_type', 'slider_position', 'engine_state', 'sound_file', 
+                                'sound_type', 'throttle_range', 'selected_range', 'from_state', 'to_state', 
+                                'reason', 'crossfade', 'stable', 'details']
+                    
+                    writer = csv.DictWriter(csvfile, fieldnames=fieldnames, extrasaction='ignore')
+                    writer.writeheader()
+                    
+                    for entry in supra_debug_log:
+                        # Add relative timestamp for easier reading
+                        if supra_debug_log:
+                            entry['relative_time'] = entry['timestamp'] - supra_debug_log[0]['timestamp']
+                        writer.writerow(entry)
+                
+                print(f"Debug log written successfully! {len(supra_debug_log)} events logged.")
+                print(f"\nSUMMARY OF LOGGED EVENTS:")
+                event_counts = {}
+                for entry in supra_debug_log:
+                    event_type = entry.get('event_type', 'UNKNOWN')
+                    event_counts[event_type] = event_counts.get(event_type, 0) + 1
+                
+                for event_type, count in sorted(event_counts.items()):
+                    print(f"  {event_type}: {count} occurrences")
+                
+            except Exception as e:
+                print(f"Error writing debug log: {e}")
+        else:
+            print("No debug log data to write.")
         
         if pygame.mixer.get_init():
             pygame.mixer.quit()
