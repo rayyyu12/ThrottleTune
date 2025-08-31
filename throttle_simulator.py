@@ -57,12 +57,13 @@ SUPRA_LOW_IDLE_VOLUME_DURING_REV = 0.2
 SUPRA_REV_GESTURE_WINDOW_TIME = 0.75
 SUPRA_REV_RETRIGGER_LOCKOUT = 0.5
 SUPRA_CLIP_OVERLAP_PREVENTION_TIME = 0.3
-SUPRA_THROTTLE_STABILIZATION_DELAY = 0.5
+SUPRA_THROTTLE_STABILIZATION_DELAY = 0.8  # Time to wait for throttle to stabilize before selecting range
 SUPRA_CROSSFADE_DURATION_MS = 800
 SUPRA_IDLE_TRANSITION_SPEED = 2.5
 SUPRA_CRUISE_TRANSITION_DELAY = 1.5  # Time before transitioning to cruise after pull/push
 SUPRA_THROTTLE_CHANGE_THRESHOLD = 0.15  # Minimum throttle change to trigger immediate transition
 SUPRA_HIGHWAY_CRUISE_THRESHOLD = 0.90  # Throttle threshold for highway cruise
+SUPRA_THROTTLE_STABILITY_THRESHOLD = 0.05  # Max throttle variation to be considered "stable"
 
 # Channel Definitions
 M4_CH_IDLE = 0
@@ -489,9 +490,9 @@ class SupraSoundManager:
         self.current_sound_type = None  # 'pull', 'push', 'cruise', 'highway_cruise'
         self.throttle_stable_start_time = None  # When throttle became stable in current range
         
-        # Throttle stabilization (simplified)
-        self.throttle_readings = []
-        self.stabilization_start_time = None
+        # Enhanced throttle stabilization
+        self.recent_throttle_readings = collections.deque(maxlen=10)  # Store recent throttle values
+        self.last_throttle_change_time = None  # When throttle last changed significantly
 
     def _load_sound_with_duration(self, filename):
         path = os.path.join(SUPRA_SOUND_FILES_PATH, filename)
@@ -618,34 +619,46 @@ class SupraSoundManager:
         self.idle_is_fading = False
 
     def add_throttle_reading(self, throttle_percentage):
+        """Add throttle reading and track stability"""
         current_time = time.time()
-        self.throttle_readings.append((current_time, throttle_percentage))
+        self.recent_throttle_readings.append((current_time, throttle_percentage))
         
-        cutoff_time = current_time - SUPRA_THROTTLE_STABILIZATION_DELAY
-        self.throttle_readings = [(t, v) for t, v in self.throttle_readings if t >= cutoff_time]
+        # Check if throttle changed significantly
+        if len(self.recent_throttle_readings) >= 2:
+            prev_throttle = self.recent_throttle_readings[-2][1]
+            if abs(throttle_percentage - prev_throttle) > SUPRA_THROTTLE_STABILITY_THRESHOLD:
+                self.last_throttle_change_time = current_time
     
-    def get_stabilized_throttle(self):
-        if not self.throttle_readings:
-            return None
-        
+    def is_throttle_stable(self):
+        """Check if throttle has been stable for the required duration"""
         current_time = time.time()
         
-        if self.stabilization_start_time is None:
-            self.stabilization_start_time = current_time
+        if self.last_throttle_change_time is None:
+            return False
+        
+        # Check if enough time has passed since last significant change
+        time_since_change = current_time - self.last_throttle_change_time
+        if time_since_change < SUPRA_THROTTLE_STABILIZATION_DELAY:
+            return False
+        
+        # Verify throttle is actually stable by checking recent readings
+        if len(self.recent_throttle_readings) < 5:
+            return False
+        
+        recent_values = [reading[1] for reading in list(self.recent_throttle_readings)[-5:]]
+        throttle_range = max(recent_values) - min(recent_values)
+        
+        return throttle_range <= SUPRA_THROTTLE_STABILITY_THRESHOLD
+    
+    def get_stable_throttle_range(self, current_throttle):
+        """Get throttle range only if throttle is stable"""
+        if not self.is_throttle_stable():
             return None
-        
-        if current_time - self.stabilization_start_time < SUPRA_THROTTLE_STABILIZATION_DELAY:
-            return None
-        
-        if len(self.throttle_readings) > 0:
-            recent_values = [v for t, v in self.throttle_readings]
-            return sum(recent_values) / len(recent_values)
-        
-        return None
+        return self.get_throttle_range(current_throttle)
     
     def reset_throttle_stabilization(self):
-        self.throttle_readings.clear()
-        self.stabilization_start_time = None
+        self.recent_throttle_readings.clear()
+        self.last_throttle_change_time = None
 
     def get_throttle_range(self, throttle):
         """Determine which throttle range we're in"""
@@ -688,18 +701,19 @@ class SupraSoundManager:
                 sound_name = 'highway_cruise_loop'
                 
         elif sound_type == 'cruise':
-            # Regular cruise uses light_cruise files for light range ONLY
-            if throttle_range == 'light':
+            # Use light_cruise for ALL ranges except highway
+            if throttle_range == 'highway':
+                # Highway range gets special highway cruise
+                if self.sounds.get('highway_cruise_loop'):
+                    selected_sound = self.sounds['highway_cruise_loop']
+                    sound_name = 'highway_cruise_loop'
+                    sound_type = 'highway_cruise'  # Update type
+            else:
+                # All other ranges (light, aggressive, violent) use light_cruise files
                 available_sounds = [s for s in self.light_cruise_sounds if self.sounds.get(s)]
                 if available_sounds:
                     sound_name = random.choice(available_sounds)
                     selected_sound = self.sounds[sound_name]
-            else:
-                # For non-light ranges, there's no separate cruise - use highway if at highway range
-                if throttle_range == 'highway' and self.sounds.get('highway_cruise_loop'):
-                    selected_sound = self.sounds['highway_cruise_loop']
-                    sound_name = 'highway_cruise_loop'
-                    sound_type = 'highway_cruise'  # Update type
                 
         else:  # pull/push sounds
             if throttle_range == 'light':
@@ -1143,12 +1157,23 @@ class SupraEngineSimulation:
         elif self.state == "IDLE":
             self._check_rev_gestures(current_time, previous_throttle)
             
-            # Transition to driving when throttle is applied
-            if self.current_throttle >= 0.10 and not self.sm.is_driving_sound_busy():
-                if self.sm.play_driving_sound(self.current_throttle):
-                    self.state = "PULL"
-                    self.sm.set_idle_target_volume(0.0)
-                    print(f"\nSupra transitioning to PULL from idle ({self.current_throttle:.2f})")
+            # Transition from idle when throttle is applied AND STABLE
+            if self.current_throttle >= 0.10:
+                # Add throttle reading for stability tracking
+                self.sm.add_throttle_reading(self.current_throttle)
+                
+                # Only transition if throttle is stable
+                stable_range = self.sm.get_stable_throttle_range(self.current_throttle)
+                if stable_range and stable_range != 'idle' and not self.sm.is_driving_sound_busy():
+                    if self.sm.play_driving_sound(self.current_throttle, force_type='pull'):
+                        self.state = "PULL"
+                        self.range_when_pull_started = stable_range
+                        self.pull_start_time = current_time
+                        self.sm.set_idle_target_volume(0.0)
+                        print(f"\nSupra IDLE -> PULL ({stable_range} range) at {self.current_throttle:.2f} (waited for stability)")
+            else:
+                # Reset stabilization when back at idle throttle
+                self.sm.reset_throttle_stabilization()
 
         elif self.state == "PULL":
             self._handle_driving_state(current_time, "PULL")
