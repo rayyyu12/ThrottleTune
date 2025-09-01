@@ -630,8 +630,6 @@ class SupraSoundManager:
         
         # Check if we can play (unless crossfading)
         if not crossfade:
-            if current_time - self.last_clip_start_time < SUPRA_CLIP_OVERLAP_PREVENTION_TIME:
-                return False
             if self.channel_driving_A.get_busy() or self.channel_driving_B.get_busy():
                 return False
         
