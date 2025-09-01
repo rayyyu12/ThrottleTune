@@ -56,14 +56,13 @@ SUPRA_NORMAL_IDLE_VOLUME = 0.7
 SUPRA_LOW_IDLE_VOLUME_DURING_REV = 0.2
 SUPRA_REV_GESTURE_WINDOW_TIME = 0.75
 SUPRA_REV_RETRIGGER_LOCKOUT = 0.5
-SUPRA_CLIP_OVERLAP_PREVENTION_TIME = 0.3
-SUPRA_THROTTLE_STABILIZATION_DELAY = 0.8  # Time to wait for throttle to stabilize before selecting range
 SUPRA_CROSSFADE_DURATION_MS = 800
 SUPRA_IDLE_TRANSITION_SPEED = 2.5
-SUPRA_CRUISE_TRANSITION_DELAY = 1.5  # Time before transitioning to cruise after pull/push
-SUPRA_THROTTLE_CHANGE_THRESHOLD = 0.15  # Minimum throttle change to trigger immediate transition
+SUPRA_CRUISE_TRANSITION_DELAY = 0.75  # Time before transitioning to cruise after pull/push (750ms)
 SUPRA_HIGHWAY_CRUISE_THRESHOLD = 0.90  # Throttle threshold for highway cruise
-SUPRA_THROTTLE_STABILITY_THRESHOLD = 0.05  # Max throttle variation to be considered "stable"
+
+# EMA Throttle Parameters
+SUPRA_EMA_ALPHA = 0.3  # EMA smoothing factor (0 = no smoothing, 1 = no filtering)
 
 # Channel Definitions
 M4_CH_IDLE = 0
@@ -89,7 +88,6 @@ SLIDER_WIDTH = 400
 # Global variables
 running_simulation = True
 log_data = []
-supra_debug_log = []  # Detailed Supra debugging log
 
 class M4SoundManager:
     def __init__(self):
@@ -487,13 +485,6 @@ class SupraSoundManager:
         
         # State tracking
         self.last_clip_start_time = 0
-        self.current_throttle_range = None  # Track current throttle range
-        self.current_sound_type = None  # 'pull', 'push', 'cruise', 'highway_cruise'
-        self.throttle_stable_start_time = None  # When throttle became stable in current range
-        
-        # Enhanced throttle stabilization
-        self.recent_throttle_readings = collections.deque(maxlen=10)  # Store recent throttle values
-        self.last_throttle_change_time = None  # When throttle last changed significantly
 
     def _load_sound_with_duration(self, filename):
         path = os.path.join(SUPRA_SOUND_FILES_PATH, filename)
@@ -619,99 +610,6 @@ class SupraSoundManager:
         self.channel_idle.stop()
         self.idle_is_fading = False
 
-    def add_throttle_reading(self, throttle_percentage):
-        """Add throttle reading and track stability"""
-        global supra_debug_log
-        current_time = time.time()
-        self.recent_throttle_readings.append((current_time, throttle_percentage))
-        
-        # Check if throttle changed significantly
-        if len(self.recent_throttle_readings) >= 2:
-            prev_throttle = self.recent_throttle_readings[-2][1]
-            throttle_change = abs(throttle_percentage - prev_throttle)
-            if throttle_change > SUPRA_THROTTLE_STABILITY_THRESHOLD:
-                self.last_throttle_change_time = current_time
-                supra_debug_log.append({
-                    'timestamp': current_time,
-                    'event_type': 'THROTTLE_CHANGE',
-                    'slider_position': throttle_percentage,
-                    'prev_position': prev_throttle,
-                    'change_amount': throttle_change,
-                    'details': f'Significant change detected: {prev_throttle:.3f} -> {throttle_percentage:.3f}'
-                })
-    
-    def is_throttle_stable(self):
-        """Check if throttle has been stable for the required duration"""
-        global supra_debug_log
-        current_time = time.time()
-        
-        if self.last_throttle_change_time is None:
-            supra_debug_log.append({
-                'timestamp': current_time,
-                'event_type': 'STABILITY_CHECK',
-                'slider_position': self.recent_throttle_readings[-1][1] if self.recent_throttle_readings else 0,
-                'stable': False,
-                'details': 'No throttle change time recorded yet'
-            })
-            return False
-        
-        # Check if enough time has passed since last significant change
-        time_since_change = current_time - self.last_throttle_change_time
-        if time_since_change < SUPRA_THROTTLE_STABILIZATION_DELAY:
-            supra_debug_log.append({
-                'timestamp': current_time,
-                'event_type': 'STABILITY_CHECK',
-                'slider_position': self.recent_throttle_readings[-1][1] if self.recent_throttle_readings else 0,
-                'stable': False,
-                'details': f'Waiting for stability: {time_since_change:.2f}s / {SUPRA_THROTTLE_STABILIZATION_DELAY}s'
-            })
-            return False
-        
-        # Verify throttle is actually stable by checking recent readings
-        if len(self.recent_throttle_readings) < 5:
-            supra_debug_log.append({
-                'timestamp': current_time,
-                'event_type': 'STABILITY_CHECK',
-                'slider_position': self.recent_throttle_readings[-1][1] if self.recent_throttle_readings else 0,
-                'stable': False,
-                'details': f'Not enough readings: {len(self.recent_throttle_readings)} / 5'
-            })
-            return False
-        
-        recent_values = [reading[1] for reading in list(self.recent_throttle_readings)[-5:]]
-        throttle_range = max(recent_values) - min(recent_values)
-        is_stable = throttle_range <= SUPRA_THROTTLE_STABILITY_THRESHOLD
-        
-        current_throttle = self.recent_throttle_readings[-1][1]
-        supra_debug_log.append({
-            'timestamp': current_time,
-            'event_type': 'STABILITY_CHECK',
-            'slider_position': current_throttle,
-            'stable': is_stable,
-            'details': f'Range variation: {throttle_range:.4f}, threshold: {SUPRA_THROTTLE_STABILITY_THRESHOLD}, time_stable: {time_since_change:.2f}s'
-        })
-        
-        return is_stable
-    
-    def get_stable_throttle_range(self, current_throttle):
-        """Get throttle range only if throttle is stable"""
-        global supra_debug_log
-        if not self.is_throttle_stable():
-            return None
-        
-        throttle_range = self.get_throttle_range(current_throttle)
-        supra_debug_log.append({
-            'timestamp': time.time(),
-            'event_type': 'STABLE_RANGE_SELECTED',
-            'slider_position': current_throttle,
-            'selected_range': throttle_range,
-            'details': f'Throttle stable at {current_throttle:.3f}, selected range: {throttle_range}'
-        })
-        return throttle_range
-    
-    def reset_throttle_stabilization(self):
-        self.recent_throttle_readings.clear()
-        self.last_throttle_change_time = None
 
     def get_throttle_range(self, throttle):
         """Determine which throttle range we're in"""
@@ -728,28 +626,13 @@ class SupraSoundManager:
     
     def play_driving_sound(self, throttle_percentage, force_type=None, crossfade=False):
         """Play appropriate driving sound based on throttle and context"""
-        global supra_debug_log
         current_time = time.time()
         
         # Check if we can play (unless crossfading)
         if not crossfade:
             if current_time - self.last_clip_start_time < SUPRA_CLIP_OVERLAP_PREVENTION_TIME:
-                supra_debug_log.append({
-                    'timestamp': current_time,
-                    'event_type': 'AUDIO_BLOCKED',
-                    'slider_position': throttle_percentage,
-                    'reason': 'OVERLAP_PREVENTION',
-                    'details': f'Too soon since last clip: {current_time - self.last_clip_start_time:.2f}s < {SUPRA_CLIP_OVERLAP_PREVENTION_TIME}s'
-                })
                 return False
             if self.channel_driving_A.get_busy() or self.channel_driving_B.get_busy():
-                supra_debug_log.append({
-                    'timestamp': current_time,
-                    'event_type': 'AUDIO_BLOCKED',
-                    'slider_position': throttle_percentage,
-                    'reason': 'CHANNELS_BUSY',
-                    'details': f'Driving channels busy: A={self.channel_driving_A.get_busy()}, B={self.channel_driving_B.get_busy()}'
-                })
                 return False
         
         throttle_range = self.get_throttle_range(throttle_percentage)
@@ -800,18 +683,6 @@ class SupraSoundManager:
         if selected_sound:
             target_channel = self.channel_driving_B if self.active_driving_channel == self.channel_driving_A else self.channel_driving_A
             
-            # Log audio event
-            supra_debug_log.append({
-                'timestamp': current_time,
-                'event_type': 'AUDIO_TRIGGERED',
-                'slider_position': throttle_percentage,
-                'sound_file': sound_name,
-                'sound_type': sound_type,
-                'throttle_range': throttle_range,
-                'crossfade': crossfade,
-                'details': f'Playing {sound_name} ({sound_type}) for {throttle_range} range'
-            })
-            
             if crossfade:
                 # Crossfade implementation
                 fade_out_channel = self.active_driving_channel
@@ -843,16 +714,6 @@ class SupraSoundManager:
             self.last_clip_start_time = current_time
             
             return True
-        else:
-            # Log when no sound could be played
-            supra_debug_log.append({
-                'timestamp': current_time,
-                'event_type': 'AUDIO_FAILED',
-                'slider_position': throttle_percentage,
-                'sound_type': sound_type or 'unknown',
-                'throttle_range': throttle_range,
-                'details': f'No sound available for {sound_type} in {throttle_range} range'
-            })
         
         return False
 
@@ -896,36 +757,6 @@ class SupraSoundManager:
     
     def is_driving_sound_busy(self):
         return self.channel_driving_A.get_busy() or self.channel_driving_B.get_busy() or self.transitioning_driving_sound
-    
-    def should_transition_immediately(self, new_throttle, current_range):
-        """Determine if we should immediately transition due to significant throttle change"""
-        if not self.is_driving_sound_busy():
-            return False
-        
-        new_range = self.get_throttle_range(new_throttle)
-        
-        # If we changed throttle ranges, transition immediately
-        if new_range != current_range:
-            return True
-        
-        # If throttle changed significantly within the same range during cruise
-        if self.current_sound_type in ['cruise', 'highway_cruise']:
-            # Check for significant throttle change
-            throttle_change = abs(new_throttle - self.get_range_center(current_range))
-            if throttle_change > SUPRA_THROTTLE_CHANGE_THRESHOLD:
-                return True
-        
-        return False
-    
-    def get_range_center(self, range_name):
-        """Get the center throttle value for a range"""
-        range_centers = {
-            'light': 0.20,
-             'aggressive': 0.45,
-            'violent': 0.80,
-            'highway': 0.95
-        }
-        return range_centers.get(range_name, 0.5)
     
     def stop_driving_sounds(self, fade_ms=0):
         """Stop all driving sounds with optional fade"""
@@ -1189,195 +1020,231 @@ class SupraEngineSimulation:
     def __init__(self, sound_manager):
         self.sm = sound_manager
         self.state = "ENGINE_OFF"
-        self.current_throttle = 0.0
-        self.throttle_history = collections.deque(maxlen=20)
+        
+        # Raw and EMA throttle values
+        self.raw_throttle = 0.0
+        self.ema_throttle = 0.0
         
         # Rev gesture detection (preserved from original)
+        self.throttle_history = collections.deque(maxlen=20)
         self.in_potential_rev_gesture = False
         self.rev_gesture_start_time = 0.0
         self.peak_throttle_in_rev_gesture = 0.0
         self.rev_gesture_lockout_until_time = 0.0
         
-        # New cruise state management
-        self.current_throttle_range = None
-        self.throttle_stable_time = None
-        self.last_significant_throttle_change = None
+        # State machine tracking
+        self.state_start_time = 0.0
+        self.last_pull_sound_start_time = 0.0
+        
+        # Audio queue system for ACCELERATING state
+        self.audio_queue = None  # Will hold queued sound info: {'range': str, 'throttle': float, 'sound_type': str}
+        self.current_playing_sound_range = None
 
-    def update(self, dt, new_throttle_value):
-        previous_throttle = self.current_throttle
-        self.current_throttle = new_throttle_value
+    def update(self, dt, new_raw_throttle):
+        previous_ema_throttle = self.ema_throttle
+        self.raw_throttle = new_raw_throttle
+        
+        # Update EMA throttle (the key component of your vision)
+        self.ema_throttle = (SUPRA_EMA_ALPHA * self.raw_throttle) + ((1 - SUPRA_EMA_ALPHA) * self.ema_throttle)
+        
         current_time = time.time()
-        
-        self.throttle_history.append((current_time, self.current_throttle))
+        self.throttle_history.append((current_time, self.raw_throttle))
         self.sm.update_idle_fade(dt)
-        self.sm.update_driving_crossfade()  # Update crossfade transitions
-        
-        # Track throttle range changes
-        new_throttle_range = self.sm.get_throttle_range(self.current_throttle)
-        if new_throttle_range != self.current_throttle_range:
-            self.current_throttle_range = new_throttle_range
-            self.last_significant_throttle_change = current_time
-            self.throttle_stable_time = None
-        elif self.throttle_stable_time is None and self.current_throttle_range != 'idle':
-            # Start tracking stability when we stay in the same range
-            self.throttle_stable_time = current_time
-        
-        # Handle idle volume restoration
-        if self.state == "IDLE" and not self.sm.is_rev_sound_busy():
-            if abs(self.sm.idle_target_volume - SUPRA_NORMAL_IDLE_VOLUME) > 0.01:
-                self.sm.set_idle_target_volume(SUPRA_NORMAL_IDLE_VOLUME)
-            if not self.sm.channel_idle.get_busy():
-                self.sm.play_idle()
+        self.sm.update_driving_crossfade()
 
-        # State machine
+        # State machine based on EMA throttle
         if self.state == "ENGINE_OFF":
-            if self.current_throttle > THROTTLE_DEADZONE_LOW + 0.05:
+            if self.raw_throttle > THROTTLE_DEADZONE_LOW + 0.05:
                 print("\nSupra Engine Starting...")
                 self.state = "STARTING"
+                self.state_start_time = current_time
                 self.sm.play_startup_sound()
-                self.current_throttle = 0.0
+                self.raw_throttle = 0.0
+                self.ema_throttle = 0.0
 
         elif self.state == "STARTING":
             if not self.sm.channel_rev_sfx.get_busy():
                 print("\nSupra Engine Idling.")
                 self.state = "IDLE"
+                self.state_start_time = current_time
                 self.sm.set_idle_target_volume(SUPRA_NORMAL_IDLE_VOLUME)
                 self.sm.play_idle()
 
         elif self.state == "IDLE":
-            global supra_debug_log
-            self._check_rev_gestures(current_time, previous_throttle)
-            
-            # Always log current slider position
-            supra_debug_log.append({
-                'timestamp': current_time,
-                'event_type': 'IDLE_UPDATE',
-                'slider_position': self.current_throttle,
-                'engine_state': self.state,
-                'details': f'In IDLE state, throttle at {self.current_throttle:.3f}'
-            })
-            
-            # Transition from idle when throttle is applied AND STABLE
-            if self.current_throttle >= 0.10:
-                # Add throttle reading for stability tracking
-                self.sm.add_throttle_reading(self.current_throttle)
-                
-                # Only transition if throttle is stable
-                stable_range = self.sm.get_stable_throttle_range(self.current_throttle)
-                if stable_range and stable_range != 'idle' and not self.sm.is_driving_sound_busy():
-                    supra_debug_log.append({
-                        'timestamp': current_time,
-                        'event_type': 'STATE_CHANGE',
-                        'slider_position': self.current_throttle,
-                        'from_state': 'IDLE',
-                        'to_state': 'PULL',
-                        'selected_range': stable_range,
-                        'details': f'IDLE -> PULL transition at {self.current_throttle:.3f} (range: {stable_range})'
-                    })
-                    
-                    if self.sm.play_driving_sound(self.current_throttle, force_type='pull'):
-                        self.state = "PULL"
-                        self.range_when_pull_started = stable_range
-                        self.pull_start_time = current_time
-                        self.sm.set_idle_target_volume(0.0)
-                        print(f"\nSupra IDLE -> PULL ({stable_range} range) at {self.current_throttle:.2f} (waited for stability)")
-                elif stable_range is None:
-                    supra_debug_log.append({
-                        'timestamp': current_time,
-                        'event_type': 'TRANSITION_BLOCKED',
-                        'slider_position': self.current_throttle,
-                        'reason': 'THROTTLE_NOT_STABLE',
-                        'details': f'Throttle at {self.current_throttle:.3f} but not stable enough for transition'
-                    })
-            else:
-                # Reset stabilization when back at idle throttle
-                self.sm.reset_throttle_stabilization()
-                supra_debug_log.append({
-                    'timestamp': current_time,
-                    'event_type': 'THROTTLE_RESET',
-                    'slider_position': self.current_throttle,
-                    'details': f'Throttle below 10%, reset stabilization'
-                })
+            self._handle_idle_state(current_time, previous_ema_throttle)
 
-        elif self.state == "PULL":
-            self._handle_driving_state(current_time, "PULL")
+        elif self.state == "ACCELERATING":
+            self._handle_accelerating_state(current_time)
 
-        elif self.state == "CRUISE":
-            self._handle_driving_state(current_time, "CRUISE")
+        elif self.state == "CRUISING":
+            self._handle_cruising_state(current_time)
 
-    def _handle_driving_state(self, current_time, current_state):
-        """Handle logic for PULL and CRUISE states"""
+    def _handle_idle_state(self, current_time, previous_ema_throttle):
+        """Handle IDLE state logic"""
+        # Handle idle volume restoration
+        if not self.sm.is_rev_sound_busy():
+            if abs(self.sm.idle_target_volume - SUPRA_NORMAL_IDLE_VOLUME) > 0.01:
+                self.sm.set_idle_target_volume(SUPRA_NORMAL_IDLE_VOLUME)
+            if not self.sm.channel_idle.get_busy():
+                self.sm.play_idle()
         
-        # Check if we should return to idle
-        if self.current_throttle < 0.05:
-            print(f"\nSupra returning to idle from {current_state}")
+        # Check for rev gestures using raw throttle (preserved behavior)
+        self._check_rev_gestures(current_time, previous_ema_throttle)
+        
+        # Transition to ACCELERATING when EMA throttle moves out of idle range
+        ema_range = self._get_throttle_range(self.ema_throttle)
+        if ema_range != 'idle' and not self.sm.is_driving_sound_busy():
+            print(f"\nSupra IDLE -> ACCELERATING (EMA: {self.ema_throttle:.3f}, range: {ema_range})")
+            self.state = "ACCELERATING"
+            self.state_start_time = current_time
+            self.sm.set_idle_target_volume(0.0)
+            
+            # Play initial pull sound for this range
+            if self._play_pull_sound_for_range(ema_range):
+                self.current_playing_sound_range = ema_range
+                self.last_pull_sound_start_time = current_time
+
+    def _handle_accelerating_state(self, current_time):
+        """Handle ACCELERATING state with audio queue system"""
+        ema_range = self._get_throttle_range(self.ema_throttle)
+        
+        # Return to IDLE if EMA throttle drops back to idle range
+        if ema_range == 'idle':
+            print("\nSupra ACCELERATING -> IDLE (EMA throttle returned to idle)")
             self.state = "IDLE"
+            self.state_start_time = current_time
+            self.sm.stop_driving_sounds(fade_ms=SUPRA_CROSSFADE_DURATION_MS // 2)
+            self.sm.set_idle_target_volume(SUPRA_NORMAL_IDLE_VOLUME)
+            self.sm.play_idle()
+            self.audio_queue = None
+            self.current_playing_sound_range = None
+            return
+        
+        # Check if a pull sound is currently playing
+        if self.sm.is_driving_sound_busy():
+            # If EMA throttle moved to a new range, queue the new sound
+            if ema_range != self.current_playing_sound_range:
+                print(f"\nSupra queueing sound for range {ema_range} (currently playing {self.current_playing_sound_range})")
+                # Clear any existing queue and add new sound (max queue size of 1)
+                self.audio_queue = {
+                    'range': ema_range,
+                    'throttle': self.ema_throttle,
+                    'sound_type': 'pull'
+                }
+        else:
+            # No sound playing - check if we have something queued
+            if self.audio_queue:
+                # Verify the queued sound is still appropriate for current EMA throttle
+                queued_range = self.audio_queue['range']
+                current_range = self._get_throttle_range(self.ema_throttle)
+                
+                if queued_range == current_range:
+                    print(f"\nSupra playing queued sound for range {queued_range}")
+                    if self._play_pull_sound_for_range(queued_range):
+                        self.current_playing_sound_range = queued_range
+                        self.last_pull_sound_start_time = current_time
+                else:
+                    print(f"\nSupra discarding queued sound (range changed from {queued_range} to {current_range})")
+                
+                self.audio_queue = None
+            else:
+                # No queue, check if we should transition to CRUISING or play another pull sound
+                time_since_state_start = current_time - self.state_start_time
+                
+                if time_since_state_start >= SUPRA_CRUISE_TRANSITION_DELAY:
+                    # Transition to CRUISING
+                    print(f"\nSupra ACCELERATING -> CRUISING (stable for {time_since_state_start:.2f}s)")
+                    self.state = "CRUISING"
+                    self.state_start_time = current_time
+                    
+                    # Play appropriate cruise sound
+                    cruise_type = 'highway_cruise' if ema_range == 'highway' else 'cruise'
+                    if self._play_cruise_sound_for_range(ema_range, cruise_type):
+                        self.current_playing_sound_range = ema_range
+                else:
+                    # Continue with another pull sound
+                    if self._play_pull_sound_for_range(ema_range):
+                        self.current_playing_sound_range = ema_range
+                        self.last_pull_sound_start_time = current_time
+                        print(f"\nSupra continuing ACCELERATING with new pull sound for range {ema_range}")
+
+    def _handle_cruising_state(self, current_time):
+        """Handle CRUISING state logic"""
+        ema_range = self._get_throttle_range(self.ema_throttle)
+        
+        # Return to IDLE if EMA throttle drops back to idle range
+        if ema_range == 'idle':
+            print("\nSupra CRUISING -> IDLE (EMA throttle returned to idle)")
+            self.state = "IDLE"
+            self.state_start_time = current_time
             self.sm.stop_driving_sounds(fade_ms=SUPRA_CROSSFADE_DURATION_MS // 2)
             self.sm.set_idle_target_volume(SUPRA_NORMAL_IDLE_VOLUME)
             self.sm.play_idle()
             return
         
-        # Check for immediate transitions due to significant throttle changes
-        if self.sm.should_transition_immediately(self.current_throttle, self.current_throttle_range):
-            new_range = self.sm.get_throttle_range(self.current_throttle)
-            print(f"\nSupra immediate transition: {current_state} -> PULL (range changed {self.current_throttle_range} -> {new_range})")
+        # Check if EMA throttle moved to a different range
+        if ema_range != self.current_playing_sound_range:
+            print(f"\nSupra CRUISING -> ACCELERATING (EMA range changed from {self.current_playing_sound_range} to {ema_range})")
+            # Interrupt current cruise sound and transition to ACCELERATING
+            self.state = "ACCELERATING"
+            self.state_start_time = current_time
             
-            # Crossfade to appropriate pull/push sound for new range
-            if self.sm.play_driving_sound(self.current_throttle, force_type='pull', crossfade=True):
-                self.state = "PULL"
-                self.throttle_stable_time = None
+            # Crossfade to new pull sound
+            if self.sm.play_driving_sound(self.ema_throttle, force_type='pull', crossfade=True):
+                self.current_playing_sound_range = ema_range
+                self.last_pull_sound_start_time = current_time
             return
         
-        # Handle transition from PULL to CRUISE after stability period
-        if current_state == "PULL" and not self.sm.is_driving_sound_busy():
-            if (self.throttle_stable_time is not None and 
-                current_time - self.throttle_stable_time >= SUPRA_CRUISE_TRANSITION_DELAY):
-                
-                # Transition to appropriate cruise sound
-                cruise_type = 'highway_cruise' if self.current_throttle_range == 'highway' else 'cruise'
-                
-                if self.sm.play_driving_sound(self.current_throttle, force_type=cruise_type):
-                    self.state = "CRUISE"
-                    print(f"\nSupra transitioning PULL -> CRUISE ({cruise_type}) at {self.current_throttle:.2f}")
-                else:
-                    # Fallback: play another pull sound if cruise not available
-                    if self.sm.play_driving_sound(self.current_throttle, force_type='pull'):
-                        print(f"\nSupra continuing PULL (cruise not available) at {self.current_throttle:.2f}")
-            else:
-                # Continue with another pull/push sound
-                if self.sm.play_driving_sound(self.current_throttle, force_type='pull'):
-                    print(f"\nSupra continuing PULL at {self.current_throttle:.2f}")
-        
-        # Handle CRUISE state - check if cruise sound stopped (shouldn't happen with looping)
-        elif current_state == "CRUISE" and not self.sm.is_driving_sound_busy():
-            # Restart cruise sound
-            cruise_type = 'highway_cruise' if self.current_throttle_range == 'highway' else 'cruise'
-            if self.sm.play_driving_sound(self.current_throttle, force_type=cruise_type):
-                print(f"\nSupra restarting CRUISE ({cruise_type}) at {self.current_throttle:.2f}")
+        # Handle cruise sound maintenance (restart if stopped - shouldn't happen with looping)
+        if not self.sm.is_driving_sound_busy():
+            cruise_type = 'highway_cruise' if ema_range == 'highway' else 'cruise'
+            if self._play_cruise_sound_for_range(ema_range, cruise_type):
+                print(f"\nSupra restarting CRUISE ({cruise_type}) for range {ema_range}")
+
+    def _get_throttle_range(self, throttle):
+        """Determine which throttle range we're in based on EMA throttle"""
+        if throttle >= SUPRA_HIGHWAY_CRUISE_THRESHOLD:
+            return 'highway'
+        elif throttle >= 0.61:
+            return 'violent'
+        elif throttle >= 0.31:
+            return 'aggressive'
+        elif throttle >= 0.10:
+            return 'light'
+        else:
+            return 'idle'
+
+    def _play_pull_sound_for_range(self, range_name):
+        """Play appropriate pull sound for the given range"""
+        return self.sm.play_driving_sound(self.ema_throttle, force_type='pull')
+
+    def _play_cruise_sound_for_range(self, range_name, cruise_type):
+        """Play appropriate cruise sound for the given range"""
+        return self.sm.play_driving_sound(self.ema_throttle, force_type=cruise_type)
 
     def _check_rev_gestures(self, current_time, old_throttle_value):
-        """Rev gesture detection (preserved from original logic)"""
+        """Rev gesture detection using raw throttle (preserved from original logic)"""
         if self.state != "IDLE":
             self.in_potential_rev_gesture = False
             return
 
         if not self.in_potential_rev_gesture and current_time >= self.rev_gesture_lockout_until_time:
             is_rising_from_idle = (len(self.throttle_history) < 2 or self.throttle_history[-2][1] <= THROTTLE_DEADZONE_LOW)
-            if self.current_throttle > THROTTLE_DEADZONE_LOW and is_rising_from_idle:
+            if self.raw_throttle > THROTTLE_DEADZONE_LOW and is_rising_from_idle:
                 self.in_potential_rev_gesture = True
                 self.rev_gesture_start_time = current_time
-                self.peak_throttle_in_rev_gesture = self.current_throttle
+                self.peak_throttle_in_rev_gesture = self.raw_throttle
 
         if self.in_potential_rev_gesture:
-            self.peak_throttle_in_rev_gesture = max(self.peak_throttle_in_rev_gesture, self.current_throttle)
+            self.peak_throttle_in_rev_gesture = max(self.peak_throttle_in_rev_gesture, self.raw_throttle)
             
             if current_time - self.rev_gesture_start_time > SUPRA_REV_GESTURE_WINDOW_TIME:
                 self.in_potential_rev_gesture = False
                 return
             
-            is_falling_after_peak = (self.current_throttle < self.peak_throttle_in_rev_gesture * 0.7) and \
-                                   (self.current_throttle < old_throttle_value) and \
-                                   (self.current_throttle <= THROTTLE_DEADZONE_LOW * 1.5)
+            is_falling_after_peak = (self.raw_throttle < self.peak_throttle_in_rev_gesture * 0.7) and \
+                                   (self.raw_throttle < old_throttle_value) and \
+                                   (self.raw_throttle <= THROTTLE_DEADZONE_LOW * 1.5)
             
             if is_falling_after_peak and self.peak_throttle_in_rev_gesture > THROTTLE_DEADZONE_LOW + 0.02:
                 self.in_potential_rev_gesture = False
@@ -1559,6 +1426,21 @@ class ThrottleSimulatorGUI:
                                  font=('Arial', 12), fg='#ffffff', bg='#2d2d2d')
         self.rpm_label.pack(pady=2)
         
+        # EMA Throttle display for Supra
+        self.ema_throttle_label = tk.Label(status_frame, text="EMA Throttle: N/A", 
+                                          font=('Arial', 12), fg='#ffff00', bg='#2d2d2d')
+        self.ema_throttle_label.pack(pady=2)
+        
+        # Throttle range display for Supra
+        self.throttle_range_label = tk.Label(status_frame, text="Throttle Range: N/A", 
+                                            font=('Arial', 12), fg='#ffaa00', bg='#2d2d2d')
+        self.throttle_range_label.pack(pady=2)
+        
+        # Audio queue status for Supra
+        self.audio_queue_label = tk.Label(status_frame, text="Audio Queue: N/A", 
+                                         font=('Arial', 12), fg='#00aaff', bg='#2d2d2d')
+        self.audio_queue_label.pack(pady=2)
+        
         self.status_label = tk.Label(status_frame, text="Status: Ready", 
                                     font=('Arial', 12), fg='#00ff00', bg='#2d2d2d')
         self.status_label.pack(pady=5)
@@ -1630,6 +1512,9 @@ class ThrottleSimulatorGUI:
             self.car_label.config(text="Current Car: N/A")
             self.state_label.config(text="Engine State: N/A")
             self.rpm_label.config(text="Simulated RPM: N/A")
+            self.ema_throttle_label.config(text="EMA Throttle: N/A")
+            self.throttle_range_label.config(text="Throttle Range: N/A")
+            self.audio_queue_label.config(text="Audio Queue: N/A")
             self.status_label.config(text="Status: Simulation stopped", fg='#ffaa00')
             
             print("Simulation stopped")
@@ -1639,10 +1524,7 @@ class ThrottleSimulatorGUI:
             self.dual_car_system.switch_car()
 
     def simulation_loop(self):
-        global supra_debug_log
         last_time = time.time()
-        throttle_log_interval = 0.1  # Log throttle every 100ms
-        last_throttle_log_time = 0
         
         while self.running:
             current_time = time.time()
@@ -1653,20 +1535,6 @@ class ThrottleSimulatorGUI:
             
             # Get throttle value (convert from 0-100 to 0-1)
             raw_throttle = self.throttle_value.get() / 100.0
-            
-            # Log throttle position periodically for Supra
-            if (self.dual_car_system and self.dual_car_system.current_car == "Supra" and 
-                current_time - last_throttle_log_time >= throttle_log_interval):
-                
-                active_engine = self.dual_car_system.get_active_engine()
-                supra_debug_log.append({
-                    'timestamp': current_time,
-                    'event_type': 'THROTTLE_POSITION',
-                    'slider_position': raw_throttle,
-                    'engine_state': active_engine.state if active_engine else 'UNKNOWN',
-                    'details': f'Slider at {raw_throttle:.3f} ({raw_throttle*100:.1f}%), Engine: {active_engine.state if active_engine else "UNKNOWN"}'
-                })
-                last_throttle_log_time = current_time
             
             # Update the dual car system
             if self.dual_car_system:
@@ -1692,50 +1560,33 @@ class ThrottleSimulatorGUI:
                 self.rpm_label.config(text=f"Simulated RPM: {active_engine.simulated_rpm:.0f}")
             else:
                 self.rpm_label.config(text="Simulated RPM: N/A")
+            
+            # Show EMA throttle and additional info for Supra
+            if current_car == "Supra" and hasattr(active_engine, 'ema_throttle'):
+                ema_throttle = active_engine.ema_throttle
+                throttle_range = active_engine._get_throttle_range(ema_throttle)
+                
+                self.ema_throttle_label.config(text=f"EMA Throttle: {ema_throttle:.3f} ({ema_throttle*100:.1f}%)")
+                self.throttle_range_label.config(text=f"Throttle Range: {throttle_range}")
+                
+                # Show audio queue status
+                if hasattr(active_engine, 'audio_queue') and active_engine.audio_queue:
+                    queue_info = active_engine.audio_queue
+                    self.audio_queue_label.config(text=f"Audio Queue: {queue_info['range']} range queued")
+                elif hasattr(active_engine, 'current_playing_sound_range') and active_engine.current_playing_sound_range:
+                    self.audio_queue_label.config(text=f"Audio Queue: Playing {active_engine.current_playing_sound_range}")
+                else:
+                    self.audio_queue_label.config(text="Audio Queue: Empty")
+            else:
+                # Hide Supra-specific info for M4
+                self.ema_throttle_label.config(text="EMA Throttle: N/A (M4 only)")
+                self.throttle_range_label.config(text="Throttle Range: N/A (M4 only)")
+                self.audio_queue_label.config(text="Audio Queue: N/A (M4 only)")
 
     def on_closing(self):
-        global running_simulation, supra_debug_log
+        global running_simulation
         running_simulation = False
         self.stop_simulation()
-        
-        # Write debug log to CSV file
-        if supra_debug_log:
-            import csv
-            import datetime
-            
-            log_filename = f"supra_debug_log_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-            
-            print(f"\nWriting debug log to {log_filename}...")
-            
-            try:
-                with open(log_filename, 'w', newline='') as csvfile:
-                    fieldnames = ['timestamp', 'event_type', 'slider_position', 'engine_state', 'sound_file', 
-                                'sound_type', 'throttle_range', 'selected_range', 'from_state', 'to_state', 
-                                'reason', 'crossfade', 'stable', 'details']
-                    
-                    writer = csv.DictWriter(csvfile, fieldnames=fieldnames, extrasaction='ignore')
-                    writer.writeheader()
-                    
-                    for entry in supra_debug_log:
-                        # Add relative timestamp for easier reading
-                        if supra_debug_log:
-                            entry['relative_time'] = entry['timestamp'] - supra_debug_log[0]['timestamp']
-                        writer.writerow(entry)
-                
-                print(f"Debug log written successfully! {len(supra_debug_log)} events logged.")
-                print(f"\nSUMMARY OF LOGGED EVENTS:")
-                event_counts = {}
-                for entry in supra_debug_log:
-                    event_type = entry.get('event_type', 'UNKNOWN')
-                    event_counts[event_type] = event_counts.get(event_type, 0) + 1
-                
-                for event_type, count in sorted(event_counts.items()):
-                    print(f"  {event_type}: {count} occurrences")
-                
-            except Exception as e:
-                print(f"Error writing debug log: {e}")
-        else:
-            print("No debug log data to write.")
         
         if pygame.mixer.get_init():
             pygame.mixer.quit()
