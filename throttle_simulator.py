@@ -1660,7 +1660,7 @@ class HellcatEngineSimulation:
         # State tracking
         self.state_start_time = 0.0
         self.last_shift_time = 0.0
-        self.min_time_between_shifts = 0.8  # Minimum time between shifts in seconds
+        self.min_time_between_shifts = 1.5  # Minimum time between shifts in seconds
 
     def update(self, dt, new_raw_throttle):
         self.previous_throttle = self.raw_throttle
@@ -1740,18 +1740,24 @@ class HellcatEngineSimulation:
             self.simulated_rpm = max(HELLCAT_IDLE_RPM, self.simulated_rpm - total_decay * dt)
         
         # Handle upshifts (with timing constraint)
+        time_since_last_shift = current_time - self.last_shift_time
         if (self.simulated_rpm >= HELLCAT_REDLINE_RPM and 
             self.simulated_gear < 5 and 
-            current_time - self.last_shift_time >= self.min_time_between_shifts):
+            time_since_last_shift >= self.min_time_between_shifts):
             
-            print(f"Hellcat upshift: {self.simulated_gear} -> {self.simulated_gear + 1} at {self.simulated_rpm:.0f} RPM")
+            print(f"Hellcat upshift: {self.simulated_gear} -> {self.simulated_gear + 1} at {self.simulated_rpm:.0f} RPM (time since last: {time_since_last_shift:.1f}s)")
             if self.sm.play_upshift_sound():
                 self.sm.set_idle_target_volume(HELLCAT_LOW_IDLE_VOLUME_DURING_SHIFT)
             
+            old_gear = self.simulated_gear
             self.simulated_gear += 1
-            # Reset RPM to much lower value to prevent immediate next upshift
-            self.simulated_rpm = 3000 + (self.simulated_gear * 200)  # 3200, 3400, 3600, 3800 for gears 2,3,4,5
+            # Reset RPM to much lower value after upshift
+            new_rpm = 1800 + (self.simulated_gear * 100)  # 1900, 2000, 2100, 2200 for gears 2,3,4,5
+            print(f"RPM reset from {self.simulated_rpm:.0f} to {new_rpm:.0f}")
+            self.simulated_rpm = new_rpm
             self.last_shift_time = current_time
+        elif self.simulated_rpm >= HELLCAT_REDLINE_RPM and self.simulated_gear < 5:
+            print(f"Upshift blocked - time constraint: {time_since_last_shift:.1f}s < {self.min_time_between_shifts}s")
         
         # Handle downshifts - improved logic for realistic throttle behavior
         if (self.simulated_gear > 1 and 
@@ -2139,9 +2145,15 @@ class ThrottleSimulatorGUI:
             self.state_label.config(text=f"Engine State: {active_engine.state}")
             
             if hasattr(active_engine, 'simulated_rpm'):
-                self.rpm_label.config(text=f"Simulated RPM: {active_engine.simulated_rpm:.0f}")
+                rpm_value = active_engine.simulated_rpm
+                self.rpm_label.config(text=f"Simulated RPM: {rpm_value:.0f}")
+                # Debug: print RPM for Hellcat
+                if current_car == "Hellcat":
+                    print(f"GUI Debug - Hellcat RPM: {rpm_value:.0f}, State: {active_engine.state}, Gear: {getattr(active_engine, 'simulated_gear', 'N/A')}")
             else:
                 self.rpm_label.config(text="Simulated RPM: N/A")
+                if current_car == "Hellcat":
+                    print(f"GUI Debug - Hellcat has no simulated_rpm attribute")
             
             # Display car-specific information
             if current_car == "Supra" and hasattr(active_engine, 'ema_throttle'):
@@ -2162,16 +2174,22 @@ class ThrottleSimulatorGUI:
                 else:
                     self.dynamic_info_label.config(text="Audio Queue: Empty")
             
-            elif current_car == "Hellcat" and hasattr(active_engine, 'smoothed_throttle'):
+            elif current_car == "Hellcat":
                 # Hellcat-specific displays
-                smoothed_throttle = active_engine.smoothed_throttle
-                engine_load = active_engine.engine_load
-                gear = active_engine.simulated_gear
-                
-                self.ema_throttle_label.config(text=f"Smoothed Throttle: {smoothed_throttle:.3f} ({smoothed_throttle*100:.1f}%)")
-                self.throttle_range_label.config(text="Throttle Range: N/A")
-                self.engine_load_label.config(text=f"Engine Load: {engine_load:+.3f}")
-                self.dynamic_info_label.config(text=f"Current Gear: {gear}")
+                if hasattr(active_engine, 'smoothed_throttle'):
+                    smoothed_throttle = active_engine.smoothed_throttle
+                    engine_load = active_engine.engine_load
+                    gear = active_engine.simulated_gear
+                    
+                    self.ema_throttle_label.config(text=f"Smoothed Throttle: {smoothed_throttle:.3f} ({smoothed_throttle*100:.1f}%)")
+                    self.throttle_range_label.config(text="Throttle Range: N/A")
+                    self.engine_load_label.config(text=f"Engine Load: {engine_load:+.3f}")
+                    self.dynamic_info_label.config(text=f"Current Gear: {gear}")
+                else:
+                    self.ema_throttle_label.config(text="Smoothed Throttle: N/A")
+                    self.throttle_range_label.config(text="Throttle Range: N/A")
+                    self.engine_load_label.config(text="Engine Load: N/A")
+                    self.dynamic_info_label.config(text="Current Gear: N/A")
                 
             else:
                 # M4 or default displays
