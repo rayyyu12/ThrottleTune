@@ -1098,6 +1098,11 @@ class HellcatSoundManager:
         self.sounds['upshift'], _ = self._load_sound_with_duration("hellcat_upshift_bark.wav")
         self.sounds['downshift_1'], _ = self._load_sound_with_duration("hellcat_downshift_revmatch1.wav")
         self.sounds['downshift_2'], _ = self._load_sound_with_duration("hellcat_downshift_revmatch2.wav")
+        
+        # Rev sounds (simple system)
+        self.sounds['rev_1'], _ = self._load_sound_with_duration("hellcat_rev_1.wav")
+        self.sounds['rev_2'], _ = self._load_sound_with_duration("hellcat_rev_2.wav")
+        self.sounds['rev_3'], _ = self._load_sound_with_duration("hellcat_rev_3.wav")
 
     def set_idle_target_volume(self, target_volume, instant=False):
         target_volume = max(0.0, min(1.0, target_volume))
@@ -1472,6 +1477,25 @@ class HellcatSoundManager:
         return self.channel_startup.get_busy()
 
     def is_shift_busy(self):
+        return self.channel_shift_sfx.get_busy()
+    
+    def play_simple_rev(self):
+        """Play a randomly selected rev sound (simple system)"""
+        rev_sounds = ['rev_1', 'rev_2', 'rev_3']
+        selected_sound_key = random.choice(rev_sounds)
+        rev_sound = self.sounds.get(selected_sound_key)
+        
+        if rev_sound:
+            # Use the shift SFX channel for revs (they don't overlap with shifts during idle)
+            self.channel_shift_sfx.stop()
+            self.channel_shift_sfx.set_volume(MASTER_ENGINE_VOL)
+            self.channel_shift_sfx.play(rev_sound)
+            print(f"Hellcat simple rev: {selected_sound_key}")
+            return True
+        return False
+    
+    def is_rev_busy(self):
+        """Check if a rev sound is playing (shares shift channel)"""
         return self.channel_shift_sfx.get_busy()
 
     def update(self, dt):
@@ -1850,18 +1874,36 @@ class SupraEngineSimulation:
 
     # NEW: Enhanced state handlers from simulator
     def _handle_idle_state(self, current_time, previous_raw_throttle):
-        """Handle IDLE state logic"""
+        """FIXED: Handle IDLE state logic with rev gesture priority"""
         if not self.sm.is_rev_sound_busy():
             self.sm.set_idle_target_volume(SUPRA_NORMAL_IDLE_VOLUME)
             if not self.sm.channel_idle.get_busy():
                 self.sm.play_idle()
         
+        # ALWAYS check for rev gestures first
         self._check_rev_gestures(current_time, previous_raw_throttle)
         
+        # CRITICAL FIX: Don't trigger driving states if rev gesture is active or recently completed
+        if self.in_potential_rev_gesture:
+            # Rev gesture in progress - don't transition to driving states
+            return
+        
+        # Also don't transition if a rev just finished (brief exclusion period)
+        if current_time < (self.rev_gesture_lockout_until_time - SUPRA_REV_RETRIGGER_LOCKOUT + 0.3):
+            # Rev recently completed - give it 300ms exclusion
+            return
+        
         ema_range = self._get_throttle_range(self.ema_throttle)
-        # Transition to PRE_ACCEL instead of direct acceleration
+        
+        # ENHANCED: Only transition to driving if throttle is sustained (not a quick blip)
         if ema_range != 'idle':
-            print(f"\nSupra IDLE -> PRE_ACCEL (Waiting for intent...)")
+            # Additional check: make sure this isn't just EMA lag from a completed rev gesture
+            # If raw throttle is back to idle but EMA is still elevated, wait for EMA to settle
+            if self.raw_throttle <= THROTTLE_DEADZONE_LOW * 1.2 and self.ema_throttle > 0.08:
+                # This is likely EMA lag from a rev gesture - don't transition
+                return
+                
+            print(f"\nSupra IDLE -> PRE_ACCEL (EMA range: {ema_range}, sustained throttle)")
             self.state = "PRE_ACCEL"
             self.state_start_time = current_time
             self.sm.set_idle_target_volume(0.0)
@@ -1982,41 +2024,59 @@ class SupraEngineSimulation:
         return self.sm.play_driving_sound(self.ema_throttle, force_type=cruise_type)
 
     def _check_rev_gestures(self, current_time, old_throttle_value):
+        """ENHANCED: Rev gesture detection with better conflict avoidance"""
         if self.state != "IDLE":
             self.in_potential_rev_gesture = False
             return
 
+        # Start new rev gesture detection
         if not self.in_potential_rev_gesture and current_time >= self.rev_gesture_lockout_until_time:
             is_rising_from_idle = (len(self.throttle_history) < 2 or self.throttle_history[-2][1] <= THROTTLE_DEADZONE_LOW)
             if self.raw_throttle > THROTTLE_DEADZONE_LOW and is_rising_from_idle:
+                print(f"Supra rev gesture START: throttle {self.raw_throttle:.3f}")
                 self.in_potential_rev_gesture = True
                 self.rev_gesture_start_time = current_time
                 self.peak_throttle_in_rev_gesture = self.raw_throttle
 
+        # Process ongoing rev gesture
         if self.in_potential_rev_gesture:
             self.peak_throttle_in_rev_gesture = max(self.peak_throttle_in_rev_gesture, self.raw_throttle)
             
+            # Timeout check
             if current_time - self.rev_gesture_start_time > SUPRA_REV_GESTURE_WINDOW_TIME:
+                print(f"Supra rev gesture TIMEOUT (peak: {self.peak_throttle_in_rev_gesture:.3f})")
                 self.in_potential_rev_gesture = False
                 return
             
-            is_falling_after_peak = (self.raw_throttle < self.peak_throttle_in_rev_gesture * 0.7) and \
-                                   (self.raw_throttle < old_throttle_value) and \
-                                   (self.raw_throttle <= THROTTLE_DEADZONE_LOW * 1.5)
+            # ENHANCED: More precise rev completion detection
+            is_falling_after_peak = (
+                self.raw_throttle < self.peak_throttle_in_rev_gesture * 0.6 and  # More aggressive drop threshold
+                self.raw_throttle < old_throttle_value and                        # Actually falling
+                self.raw_throttle <= THROTTLE_DEADZONE_LOW * 1.8                  # Close to idle
+            )
             
-            if is_falling_after_peak and self.peak_throttle_in_rev_gesture > THROTTLE_DEADZONE_LOW + 0.02:
+            # ENHANCED: Better minimum threshold to avoid tiny blips triggering revs
+            min_rev_threshold = THROTTLE_DEADZONE_LOW + 0.04  # Increased from 0.02
+            
+            if is_falling_after_peak and self.peak_throttle_in_rev_gesture > min_rev_threshold:
                 current_gesture_peak_throttle = self.peak_throttle_in_rev_gesture
                 
+                print(f"Supra rev gesture COMPLETE: peak {current_gesture_peak_throttle:.3f}, current {self.raw_throttle:.3f}")
                 self.in_potential_rev_gesture = False
                 self.rev_gesture_lockout_until_time = current_time + SUPRA_REV_RETRIGGER_LOCKOUT
                 
-                # Use new staged rev system
+                # Play the rev sound
                 rev_sound_info = self.sm.play_staged_rev(self.simulated_rpm, current_gesture_peak_throttle)
                 
                 if rev_sound_info:
                     self.simulated_rpm = rev_sound_info['rpm_peak']
                     self.last_rev_sound_finish_time = current_time + rev_sound_info['duration']
                     self.sm.set_idle_target_volume(SUPRA_LOW_IDLE_VOLUME_DURING_REV)
+                    print(f"Supra rev played: {rev_sound_info['sound_name']} (RPM: {rev_sound_info['rpm_peak']})")
+            elif is_falling_after_peak:
+                # Rev gesture completed but was too small - cancel it
+                print(f"Supra rev gesture CANCELLED: peak {self.peak_throttle_in_rev_gesture:.3f} < threshold {min_rev_threshold:.3f}")
+                self.in_potential_rev_gesture = False
 
 class HellcatEngineSimulation:
     def __init__(self, sound_manager):
@@ -2037,6 +2097,12 @@ class HellcatEngineSimulation:
         self.state_start_time = 0.0
         self.last_shift_time = 0.0
         self.min_time_between_shifts = HELLCAT_MIN_SHIFT_INTERVAL  # Use the new constant
+        
+        # Simple rev gesture detection
+        self.in_simple_rev_gesture = False
+        self.rev_gesture_start_time = 0.0
+        self.rev_peak_throttle = 0.0
+        self.rev_lockout_until = 0.0
 
     def update(self, dt, new_raw_throttle):
         self.previous_throttle = self.raw_throttle
@@ -2081,14 +2147,19 @@ class HellcatEngineSimulation:
             self.sm.play_character_layer(self.engine_load, self.simulated_rpm, self.smoothed_throttle)
 
     def _handle_idle_state(self, current_time, dt):
-        """Handle IDLE state logic"""
+        """ENHANCED: Handle IDLE state with simple rev gesture support"""
         self.sm.set_idle_target_volume(HELLCAT_NORMAL_IDLE_VOLUME)
         
-        # Check if we should transition to driving
-        if self.smoothed_throttle > HELLCAT_THROTTLE_IDLE_THRESHOLD:
-            print(f"\nHellcat IDLE -> DRIVING (throttle: {self.smoothed_throttle:.3f})")
-            self.state = "DRIVING"
-            self.state_start_time = current_time
+        # FIRST: Check for simple rev gestures (priority over driving states)
+        self._check_simple_rev_gestures(current_time)
+        
+        # SECOND: Only transition to driving if NOT in a rev gesture
+        if not self.in_simple_rev_gesture and self.smoothed_throttle > HELLCAT_THROTTLE_IDLE_THRESHOLD:
+            # Extra check: Make sure raw throttle is also elevated (prevents EMA lag issues like Supra had)
+            if self.raw_throttle > HELLCAT_THROTTLE_IDLE_THRESHOLD:
+                print(f"\nHellcat IDLE -> DRIVING (smoothed: {self.smoothed_throttle:.3f}, raw: {self.raw_throttle:.3f})")
+                self.state = "DRIVING"
+                self.state_start_time = current_time
         
         # Update RPM decay to idle when not driving
         if self.simulated_rpm > HELLCAT_IDLE_RPM:
@@ -2191,6 +2262,52 @@ class HellcatEngineSimulation:
         # Restore idle volume after shift events
         if not self.sm.is_shift_busy():
             self.sm.set_idle_target_volume(HELLCAT_NORMAL_IDLE_VOLUME)
+    
+    def _check_simple_rev_gestures(self, current_time):
+        """SIMPLE: Rev gesture detection for Hellcat (much simpler than Supra)"""
+        # Only check for revs when idling
+        if self.state != "IDLE":
+            self.in_simple_rev_gesture = False
+            return
+        
+        # Start rev gesture detection
+        if not self.in_simple_rev_gesture and current_time >= self.rev_lockout_until:
+            # Looking for throttle rise from idle
+            if (self.raw_throttle > HELLCAT_THROTTLE_IDLE_THRESHOLD * 2 and  # At least 10% throttle
+                self.previous_throttle <= HELLCAT_THROTTLE_IDLE_THRESHOLD * 1.5):  # Was at idle before
+                
+                print(f"Hellcat simple rev START: {self.raw_throttle:.3f}")
+                self.in_simple_rev_gesture = True
+                self.rev_gesture_start_time = current_time
+                self.rev_peak_throttle = self.raw_throttle
+        
+        # Process ongoing rev gesture
+        if self.in_simple_rev_gesture:
+            self.rev_peak_throttle = max(self.rev_peak_throttle, self.raw_throttle)
+            
+            # Timeout after 1 second
+            if current_time - self.rev_gesture_start_time > 1.0:
+                print(f"Hellcat simple rev TIMEOUT (peak: {self.rev_peak_throttle:.3f})")
+                self.in_simple_rev_gesture = False
+                return
+            
+            # Check if throttle is dropping back to idle
+            is_dropping_to_idle = (
+                self.raw_throttle < self.rev_peak_throttle * 0.5 and  # Dropped to half of peak
+                self.raw_throttle <= HELLCAT_THROTTLE_IDLE_THRESHOLD * 2  # Back near idle
+            )
+            
+            if is_dropping_to_idle and self.rev_peak_throttle > 0.08:  # Minimum 8% peak
+                print(f"Hellcat simple rev COMPLETE: peak {self.rev_peak_throttle:.3f}")
+                self.in_simple_rev_gesture = False
+                self.rev_lockout_until = current_time + 0.5  # Half second lockout
+                
+                # Play random rev sound
+                if self.sm.play_simple_rev():
+                    self.sm.set_idle_target_volume(HELLCAT_LOW_IDLE_VOLUME_DURING_SHIFT)
+            elif is_dropping_to_idle:
+                print(f"Hellcat simple rev CANCELLED: peak {self.rev_peak_throttle:.3f} too small")
+                self.in_simple_rev_gesture = False
 
 class TripleCarSystem:
     def __init__(self):
@@ -2455,7 +2572,8 @@ def main():
         "hellcat_rumble_low_rpm_loop.wav", "hellcat_rumble_mid_rpm_loop.wav",
         "hellcat_whine_low_rpm_loop.wav", "hellcat_whine_high_rpm_loop.wav",
         "hellcat_exhaust_roar.wav", "hellcat_decel_burble.wav",
-        "hellcat_upshift_bark.wav", "hellcat_downshift_revmatch1.wav", "hellcat_downshift_revmatch2.wav"
+        "hellcat_upshift_bark.wav", "hellcat_downshift_revmatch1.wav", "hellcat_downshift_revmatch2.wav",
+        "hellcat_rev_1.wav", "hellcat_rev_2.wav", "hellcat_rev_3.wav"  # Simple rev system
     ]
     for sf in hellcat_sound_files_to_check:
         if not os.path.exists(os.path.join(HELLCAT_SOUND_FILES_PATH, sf)):
