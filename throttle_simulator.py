@@ -15,7 +15,7 @@ MIXER_FREQUENCY = 44100
 MIXER_SIZE = -16
 MIXER_CHANNELS_STEREO = 2
 MIXER_BUFFER = 512
-NUM_PYGAME_MIXER_CHANNELS = 25
+NUM_PYGAME_MIXER_CHANNELS = 20
 
 # Common parameters
 THROTTLE_DEADZONE_LOW = 0.05
@@ -62,31 +62,16 @@ SUPRA_CROSSFADE_DURATION_MS = 800
 SUPRA_IDLE_TRANSITION_SPEED = 2.5
 SUPRA_CRUISE_TRANSITION_DELAY = 0.75  # Time before transitioning to cruise after pull/push (750ms)
 SUPRA_HIGHWAY_CRUISE_THRESHOLD = 0.90  # Throttle threshold for highway cruise
+SUPRA_STAGED_REV_VOLUME = 0.9
 
 # EMA Throttle Parameters
 SUPRA_EMA_ALPHA = 0.3  # EMA smoothing factor (0 = no smoothing, 1 = no filtering)
 
-# Hellcat specific parameters
-HELLCAT_NORMAL_IDLE_VOLUME = 0.7
-HELLCAT_LOW_IDLE_VOLUME_DURING_SHIFT = 0.3
-HELLCAT_CROSSFADE_DURATION = 500  # milliseconds
-HELLCAT_THROTTLE_IDLE_THRESHOLD = 0.05
-HELLCAT_FADE_IN_DURATION = 150  # milliseconds
-HELLCAT_FADE_OUT_DURATION = 300  # milliseconds
-
-# Hellcat Virtual Engine Physics
-HELLCAT_RPM_ACCEL_BASE = 4000
-HELLCAT_RPM_DECAY_COAST = 1000
-HELLCAT_IDLE_RPM = 750
-HELLCAT_REDLINE_RPM = 6200
-
-# Hellcat Gear-specific behavior
-HELLCAT_GEAR_ACCEL_MULTIPLIERS = {1: 1.8, 2: 1.3, 3: 1.0, 4: 0.8, 5: 0.7}
-HELLCAT_GEAR_ENGINE_BRAKING = {1: 1500, 2: 1000, 3: 700, 4: 500, 5: 400}
-HELLCAT_GEAR_DOWNSHIFT_THRESHOLDS = {2: 1200, 3: 1500, 4: 2000, 5: 2500}
-
-# EMA Throttle Parameters for Hellcat
-HELLCAT_EMA_ALPHA = 0.2  # EMA smoothing factor (0 = no smoothing, 1 = no filtering)
+# Supra RPM simulation parameters (adapted from M4)
+SUPRA_RPM_IDLE = 900
+SUPRA_RPM_DECAY_RATE_PER_SEC = 1200
+SUPRA_RPM_DECAY_COOLDOWN_AFTER_REV = 0.1
+SUPRA_RPM_RESET_TO_IDLE_THRESHOLD_TIME = 6.0
 
 # Channel Definitions
 M4_CH_IDLE = 0
@@ -100,27 +85,9 @@ SUPRA_CH_DRIVING_A = 6
 SUPRA_CH_DRIVING_B = 7
 SUPRA_CH_REV_SFX = 8
 
-# Hellcat Channel Definitions - Foundation Layer
-HELLCAT_CH_IDLE = 9
-HELLCAT_CH_RUMBLE_LOW = 10
-HELLCAT_CH_RUMBLE_MID = 11
-HELLCAT_CH_WHINE_LOW_A = 12
-HELLCAT_CH_WHINE_LOW_B = 13
-HELLCAT_CH_WHINE_HIGH_A = 14
-HELLCAT_CH_WHINE_HIGH_B = 15
-
-# Hellcat Channel Definitions - Character Layer
-HELLCAT_CH_ACCEL_RESPONSE = 16
-HELLCAT_CH_DECEL_BURBLE = 17
-
-# Hellcat Channel Definitions - SFX Layer
-HELLCAT_CH_STARTUP = 18
-HELLCAT_CH_SHIFT_SFX = 19
-
 # Sound file paths
 M4_SOUND_FILES_PATH = "m4"
 SUPRA_SOUND_FILES_PATH = "supra"
-HELLCAT_SOUND_FILES_PATH = "hellcat"
 
 # GUI Configuration
 WINDOW_WIDTH = 800
@@ -596,6 +563,18 @@ class SupraSoundManager:
                                       'aggressive_push_4', 'aggressive_push_5', 'aggressive_push_6']
         self.violent_pull_sounds = ['violent_pull_1', 'violent_pull_2', 'violent_pull_3']
         
+        # Staged Rev Sounds (adapted from M4 approach)
+        self.rev_stages = []
+        snd, dur = self._load_sound_with_duration("supra_rev_stage1.wav")
+        self.rev_stages.append({'key': 'supra_rev_stage1', 'sound': snd, 'rpm_peak': 3500, 'duration': dur})
+        snd, dur = self._load_sound_with_duration("supra_rev_stage2.wav")
+        self.rev_stages.append({'key': 'supra_rev_stage2', 'sound': snd, 'rpm_peak': 5500, 'duration': dur})
+        snd, dur = self._load_sound_with_duration("supra_rev_stage3.wav")
+        self.rev_stages.append({'key': 'supra_rev_stage3', 'sound': snd, 'rpm_peak': 7500, 'duration': dur})
+        snd, dur = self._load_sound_with_duration("supra_rev_stage4.wav")
+        self.rev_stages.append({'key': 'supra_rev_stage4', 'sound': snd, 'rpm_peak': 9000, 'duration': dur})
+        
+        # Keep original rev sounds as fallback
         rev_sounds = [
             ('rev_1', "supra_rev_1.wav"),
             ('rev_2', "supra_rev_2.wav"),
@@ -611,6 +590,9 @@ class SupraSoundManager:
         for name, sound in self.sounds.items():
             if isinstance(sound, pygame.mixer.Sound) and sound == sound_obj:
                 return name
+        for stage in self.rev_stages:
+            if stage['sound'] == sound_obj:
+                return stage['key']
         return "UnknownSoundObject"
 
     def set_idle_target_volume(self, target_volume, instant=False):
@@ -759,7 +741,51 @@ class SupraSoundManager:
         
         return False
 
+    def play_staged_rev(self, current_rpm, gesture_peak_throttle):
+        if self.channel_rev_sfx.get_busy():
+            return None
+
+        selected_stage_info = None
+        if gesture_peak_throttle <= 0.1: 
+             if current_rpm > SUPRA_RPM_IDLE + 500: return None 
+        
+        if current_rpm < self.rev_stages[0]['rpm_peak'] * 0.8: 
+            if gesture_peak_throttle < 0.4:
+                selected_stage_info = self.rev_stages[0]
+            elif gesture_peak_throttle < 0.75:
+                selected_stage_info = self.rev_stages[1] if len(self.rev_stages) > 1 else self.rev_stages[0]
+            else:
+                selected_stage_info = self.rev_stages[2] if len(self.rev_stages) > 2 else (self.rev_stages[1] if len(self.rev_stages) > 1 else self.rev_stages[0])
+        elif current_rpm < self.rev_stages[1]['rpm_peak'] * 0.8: 
+            if gesture_peak_throttle < 0.5:
+                selected_stage_info = self.rev_stages[1] if len(self.rev_stages) > 1 else self.rev_stages[0]
+            else:
+                selected_stage_info = self.rev_stages[2] if len(self.rev_stages) > 2 else (self.rev_stages[1] if len(self.rev_stages) > 1 else self.rev_stages[0])
+        elif current_rpm < self.rev_stages[2]['rpm_peak'] * 0.9: 
+            if gesture_peak_throttle < 0.6:
+                 selected_stage_info = self.rev_stages[2] if len(self.rev_stages) > 2 else self.rev_stages[-1]
+            else:
+                 selected_stage_info = self.rev_stages[3] if len(self.rev_stages) > 3 else self.rev_stages[-1]
+        else: 
+            selected_stage_info = self.rev_stages[3] if len(self.rev_stages) > 3 else self.rev_stages[-1]
+
+        if selected_stage_info and selected_stage_info['sound']:
+            if selected_stage_info['rpm_peak'] < current_rpm and selected_stage_info != self.rev_stages[-1]:
+                for stage in self.rev_stages:
+                    if stage['rpm_peak'] >= current_rpm:
+                        selected_stage_info = stage
+                        break
+                else: 
+                    selected_stage_info = self.rev_stages[-1]
+
+            print(f"Supra Playing rev: {selected_stage_info['key']} (Peak: {selected_stage_info['rpm_peak']}) | CurrentRPM: {current_rpm:.0f} | Gesture: {gesture_peak_throttle:.2f}")
+            self.channel_rev_sfx.set_volume(SUPRA_STAGED_REV_VOLUME * MASTER_ENGINE_VOL)
+            self.channel_rev_sfx.play(selected_stage_info['sound'])
+            return {'rpm_peak': selected_stage_info['rpm_peak'], 'duration': selected_stage_info['duration']}
+        return None
+    
     def play_rev_sound(self, peak_throttle):
+        """Fallback method for simple rev sound playing (backwards compatibility)"""
         if self.channel_rev_sfx.get_busy():
             return False
         
@@ -838,387 +864,6 @@ class SupraSoundManager:
             self.channel_driving_B.fadeout(fade_ms)
         if self.channel_rev_sfx.get_busy():
             self.channel_rev_sfx.fadeout(fade_ms)
-
-class HellcatSoundManager:
-    def __init__(self):
-        self.sounds = {}
-        self.load_sounds()
-        
-        # Foundation Layer channels
-        self.channel_idle = pygame.mixer.Channel(HELLCAT_CH_IDLE)
-        self.channel_rumble_low = pygame.mixer.Channel(HELLCAT_CH_RUMBLE_LOW)
-        self.channel_rumble_mid = pygame.mixer.Channel(HELLCAT_CH_RUMBLE_MID)
-        
-        # Supercharger whine crossfading channels
-        self.channel_whine_low_a = pygame.mixer.Channel(HELLCAT_CH_WHINE_LOW_A)
-        self.channel_whine_low_b = pygame.mixer.Channel(HELLCAT_CH_WHINE_LOW_B)
-        self.channel_whine_high_a = pygame.mixer.Channel(HELLCAT_CH_WHINE_HIGH_A)
-        self.channel_whine_high_b = pygame.mixer.Channel(HELLCAT_CH_WHINE_HIGH_B)
-        
-        # Character Layer channels
-        self.channel_accel_response = pygame.mixer.Channel(HELLCAT_CH_ACCEL_RESPONSE)
-        self.channel_decel_burble = pygame.mixer.Channel(HELLCAT_CH_DECEL_BURBLE)
-        
-        # SFX Layer channels
-        self.channel_startup = pygame.mixer.Channel(HELLCAT_CH_STARTUP)
-        self.channel_shift_sfx = pygame.mixer.Channel(HELLCAT_CH_SHIFT_SFX)
-        
-        # State tracking
-        self.idle_target_volume = HELLCAT_NORMAL_IDLE_VOLUME
-        self.idle_current_volume = HELLCAT_NORMAL_IDLE_VOLUME
-        self.idle_is_fading = False
-        
-        # Whine crossfading state
-        self.whine_low_active_channel = self.channel_whine_low_a
-        self.whine_low_crossfading = False
-        self.whine_low_crossfade_start_time = 0
-        
-        self.whine_high_active_channel = self.channel_whine_high_a
-        self.whine_high_crossfading = False
-        self.whine_high_crossfade_start_time = 0
-        
-        # Audio fade tracking
-        self.accel_response_fade_start = 0
-        self.accel_response_fading = False
-
-    def _load_sound_with_duration(self, filename):
-        path = os.path.join(HELLCAT_SOUND_FILES_PATH, filename)
-        if os.path.exists(path):
-            try:
-                sound = pygame.mixer.Sound(path)
-                return sound, sound.get_length()
-            except pygame.error as e:
-                print(f"Hellcat Warning: Could not load '{filename}': {e}")
-                return None, 0
-        print(f"Hellcat Warning: Sound file not found '{filename}' at '{path}'")
-        return None, 0
-
-    def load_sounds(self):
-        # Foundation Layer sounds
-        self.sounds['idle'], _ = self._load_sound_with_duration("hellcat_idle_loop.wav")
-        self.sounds['rumble_low'], _ = self._load_sound_with_duration("hellcat_rumble_low_rpm_loop.wav")
-        self.sounds['rumble_mid'], _ = self._load_sound_with_duration("hellcat_rumble_mid_rpm_loop.wav")
-        self.sounds['whine_low'], _ = self._load_sound_with_duration("hellcat_whine_low_rpm_loop.wav")
-        self.sounds['whine_high'], _ = self._load_sound_with_duration("hellcat_whine_high_rpm_loop.wav")
-        
-        # Character Layer sounds
-        self.sounds['exhaust_roar'], _ = self._load_sound_with_duration("hellcat_exhaust_roar.wav")
-        self.sounds['decel_burble'], _ = self._load_sound_with_duration("hellcat_decel_burble.wav")
-        
-        # SFX Layer sounds
-        self.sounds['startup'], _ = self._load_sound_with_duration("hellcat_startup_roar.wav")
-        self.sounds['upshift'], _ = self._load_sound_with_duration("hellcat_upshift_bark.wav")
-        self.sounds['downshift_1'], _ = self._load_sound_with_duration("hellcat_downshift_revmatch1.wav")
-        self.sounds['downshift_2'], _ = self._load_sound_with_duration("hellcat_downshift_revmatch2.wav")
-
-    def set_idle_target_volume(self, target_volume, instant=False):
-        target_volume = max(0.0, min(1.0, target_volume))
-        if abs(self.idle_target_volume - target_volume) > 0.01 or instant:
-            self.idle_target_volume = target_volume
-            if instant:
-                self.idle_current_volume = target_volume
-                if self.channel_idle.get_sound():
-                    self.channel_idle.set_volume(self.idle_current_volume * MASTER_ENGINE_VOL)
-                self.idle_is_fading = False
-            else:
-                if abs(self.idle_current_volume - self.idle_target_volume) > 0.01:
-                    self.idle_is_fading = True
-
-    def update_idle_fade(self, dt):
-        if self.idle_is_fading and self.channel_idle.get_busy():
-            if abs(self.idle_current_volume - self.idle_target_volume) < 0.01:
-                self.idle_current_volume = self.idle_target_volume
-                self.idle_is_fading = False
-            elif self.idle_current_volume < self.idle_target_volume:
-                self.idle_current_volume = min(self.idle_current_volume + SUPRA_IDLE_TRANSITION_SPEED * dt, self.idle_target_volume)
-            else:
-                self.idle_current_volume = max(self.idle_current_volume - SUPRA_IDLE_TRANSITION_SPEED * dt, self.idle_target_volume)
-            
-            if self.channel_idle.get_sound():
-                self.channel_idle.set_volume(self.idle_current_volume * MASTER_ENGINE_VOL)
-
-    def play_foundation_layer(self, smoothed_throttle, simulated_rpm):
-        """Play and manage all foundation layer sounds"""
-        # Idle sound
-        idle_sound = self.sounds.get('idle')
-        if idle_sound:
-            if not self.channel_idle.get_busy() or self.channel_idle.get_sound() != idle_sound:
-                self.channel_idle.play(idle_sound, loops=-1)
-            
-            # Volume control based on throttle
-            if smoothed_throttle <= HELLCAT_THROTTLE_IDLE_THRESHOLD:
-                idle_volume = 1.0
-            else:
-                idle_volume = max(0.0, 1.0 - (smoothed_throttle - HELLCAT_THROTTLE_IDLE_THRESHOLD) / 0.1)
-            
-            self.channel_idle.set_volume(idle_volume * self.idle_current_volume * MASTER_ENGINE_VOL)
-        
-        # Rumble sounds crossfading
-        rumble_low = self.sounds.get('rumble_low')
-        rumble_mid = self.sounds.get('rumble_mid')
-        
-        if smoothed_throttle > HELLCAT_THROTTLE_IDLE_THRESHOLD:
-            # Low RPM rumble
-            if rumble_low:
-                if not self.channel_rumble_low.get_busy() or self.channel_rumble_low.get_sound() != rumble_low:
-                    self.channel_rumble_low.play(rumble_low, loops=-1)
-                
-                # Volume based on throttle position
-                low_volume = max(0.0, min(1.0, (smoothed_throttle - HELLCAT_THROTTLE_IDLE_THRESHOLD) * 2))
-                if smoothed_throttle > 0.5:
-                    low_volume = max(0.0, low_volume - (smoothed_throttle - 0.5))
-                
-                self.channel_rumble_low.set_volume(low_volume * MASTER_ENGINE_VOL)
-            
-            # Mid RPM rumble
-            if rumble_mid and smoothed_throttle > 0.3:
-                if not self.channel_rumble_mid.get_busy() or self.channel_rumble_mid.get_sound() != rumble_mid:
-                    self.channel_rumble_mid.play(rumble_mid, loops=-1)
-                
-                mid_volume = max(0.0, min(1.0, (smoothed_throttle - 0.3) * 1.5))
-                self.channel_rumble_mid.set_volume(mid_volume * MASTER_ENGINE_VOL)
-            else:
-                self.channel_rumble_mid.stop()
-        else:
-            self.channel_rumble_low.stop()
-            self.channel_rumble_mid.stop()
-        
-        # Supercharger whine with two-channel crossfading
-        self._update_whine_sounds(smoothed_throttle, simulated_rpm)
-
-    def _update_whine_sounds(self, smoothed_throttle, simulated_rpm):
-        """Handle supercharger whine with two-channel crossfading"""
-        whine_low = self.sounds.get('whine_low')
-        whine_high = self.sounds.get('whine_high')
-        
-        if smoothed_throttle > HELLCAT_THROTTLE_IDLE_THRESHOLD:
-            # Low RPM whine
-            if whine_low:
-                self._manage_whine_crossfade('low', whine_low, smoothed_throttle)
-                
-                # Volume and pitch increase with RPM
-                whine_volume = min(0.8, smoothed_throttle * 1.2)
-                pitch_factor = 1.0 + (simulated_rpm - HELLCAT_IDLE_RPM) / 3000.0
-                
-                self.whine_low_active_channel.set_volume(whine_volume * MASTER_ENGINE_VOL)
-            
-            # High RPM whine (starts at higher throttle)
-            if whine_high and smoothed_throttle > 0.4:
-                self._manage_whine_crossfade('high', whine_high, smoothed_throttle)
-                
-                high_volume = min(1.0, (smoothed_throttle - 0.4) * 1.5)
-                self.whine_high_active_channel.set_volume(high_volume * MASTER_ENGINE_VOL)
-            else:
-                self.channel_whine_high_a.stop()
-                self.channel_whine_high_b.stop()
-        else:
-            # Stop all whine sounds when at idle
-            self.channel_whine_low_a.stop()
-            self.channel_whine_low_b.stop()
-            self.channel_whine_high_a.stop()
-            self.channel_whine_high_b.stop()
-
-    def _manage_whine_crossfade(self, whine_type, sound, smoothed_throttle):
-        """Manage two-channel crossfading for whine sounds"""
-        current_time = time.time()
-        
-        if whine_type == 'low':
-            active_channel = self.whine_low_active_channel
-            crossfading = self.whine_low_crossfading
-            crossfade_start = self.whine_low_crossfade_start_time
-            channel_a = self.channel_whine_low_a
-            channel_b = self.channel_whine_low_b
-        else:
-            active_channel = self.whine_high_active_channel
-            crossfading = self.whine_high_crossfading
-            crossfade_start = self.whine_high_crossfade_start_time
-            channel_a = self.channel_whine_high_a
-            channel_b = self.channel_whine_high_b
-        
-        # Start playing if not already playing
-        if not active_channel.get_busy():
-            active_channel.play(sound, loops=-1)
-        
-        # Check if we need to start crossfading (near end of clip)
-        if not crossfading and active_channel.get_busy():
-            # For 14-second whine_low, start crossfade at 13.5 seconds
-            # For shorter clips, start at 85% through
-            sound_length = sound.get_length() if hasattr(sound, 'get_length') else 14.0
-            crossfade_trigger = sound_length - 0.5
-            
-            # Estimate current position (rough approximation)
-            play_time = current_time - getattr(self, f'whine_{whine_type}_play_start', current_time)
-            
-            if play_time >= crossfade_trigger:
-                # Start crossfade
-                inactive_channel = channel_b if active_channel == channel_a else channel_a
-                inactive_channel.set_volume(0)
-                inactive_channel.play(sound, loops=-1)
-                
-                if whine_type == 'low':
-                    self.whine_low_crossfading = True
-                    self.whine_low_crossfade_start_time = current_time
-                else:
-                    self.whine_high_crossfading = True
-                    self.whine_high_crossfade_start_time = current_time
-        
-        # Update crossfade if active
-        if crossfading:
-            elapsed_ms = (current_time - crossfade_start) * 1000
-            progress = min(1.0, elapsed_ms / HELLCAT_CROSSFADE_DURATION)
-            
-            if whine_type == 'low':
-                inactive_channel = self.channel_whine_low_b if active_channel == self.channel_whine_low_a else self.channel_whine_low_a
-            else:
-                inactive_channel = self.channel_whine_high_b if active_channel == self.channel_whine_high_a else self.channel_whine_high_a
-            
-            # Crossfade volumes
-            if inactive_channel.get_busy():
-                inactive_channel.set_volume(progress * MASTER_ENGINE_VOL)
-            
-            if progress >= 1.0:
-                # Crossfade complete
-                active_channel.stop()
-                if whine_type == 'low':
-                    self.whine_low_active_channel = inactive_channel
-                    self.whine_low_crossfading = False
-                    self.whine_low_play_start = current_time
-                else:
-                    self.whine_high_active_channel = inactive_channel
-                    self.whine_high_crossfading = False
-                    self.whine_high_play_start = current_time
-
-    def play_character_layer(self, engine_load, simulated_rpm, smoothed_throttle):
-        """Handle acceleration/deceleration response sounds"""
-        current_time = time.time()
-        
-        # Acceleration response
-        if engine_load > 0.05:  # Throttle being applied
-            exhaust_roar = self.sounds.get('exhaust_roar')
-            if exhaust_roar and not self.channel_accel_response.get_busy():
-                volume = min(1.0, engine_load * 2)
-                self.channel_accel_response.set_volume(volume * MASTER_ENGINE_VOL)
-                self.channel_accel_response.play(exhaust_roar)
-                
-                self.accel_response_fading = True
-                self.accel_response_fade_start = current_time
-        
-        # Deceleration burble
-        if engine_load < -0.05:  # Throttle being released
-            decel_burble = self.sounds.get('decel_burble')
-            if decel_burble:
-                if not self.channel_decel_burble.get_busy():
-                    volume = min(0.8, abs(engine_load) * 1.5)
-                    rpm_factor = min(1.0, simulated_rpm / 3000.0)
-                    self.channel_decel_burble.set_volume(volume * rpm_factor * MASTER_ENGINE_VOL)
-                    self.channel_decel_burble.play(decel_burble, loops=-1)
-        else:
-            if self.channel_decel_burble.get_busy():
-                self.channel_decel_burble.fadeout(200)
-
-    def play_startup_sound(self):
-        """Play engine startup sound"""
-        startup_sound = self.sounds.get('startup')
-        if startup_sound:
-            self.channel_startup.stop()
-            self.channel_startup.set_volume(MASTER_ENGINE_VOL)
-            self.channel_startup.play(startup_sound)
-            return True
-        return False
-
-    def play_upshift_sound(self):
-        """Play upshift sound"""
-        upshift_sound = self.sounds.get('upshift')
-        if upshift_sound:
-            self.channel_shift_sfx.stop()
-            self.channel_shift_sfx.set_volume(MASTER_ENGINE_VOL)
-            self.channel_shift_sfx.play(upshift_sound)
-            return True
-        return False
-
-    def play_downshift_sound(self):
-        """Play randomly selected downshift sound"""
-        downshift_sounds = ['downshift_1', 'downshift_2']
-        selected_sound_key = random.choice(downshift_sounds)
-        downshift_sound = self.sounds.get(selected_sound_key)
-        
-        if downshift_sound:
-            self.channel_shift_sfx.stop()
-            self.channel_shift_sfx.set_volume(MASTER_ENGINE_VOL)
-            self.channel_shift_sfx.play(downshift_sound)
-            print(f"Hellcat playing: {selected_sound_key}")
-            return True
-        return False
-
-    def is_startup_busy(self):
-        return self.channel_startup.get_busy()
-
-    def is_shift_busy(self):
-        return self.channel_shift_sfx.get_busy()
-
-    def update(self, dt):
-        """Update fades and other time-based effects"""
-        self.update_idle_fade(dt)
-        
-        # Update accel response fade
-        if self.accel_response_fading and self.channel_accel_response.get_busy():
-            current_time = time.time()
-            fade_duration = HELLCAT_FADE_OUT_DURATION / 1000.0
-            elapsed = current_time - self.accel_response_fade_start
-            
-            if elapsed >= fade_duration:
-                self.accel_response_fading = False
-            else:
-                # Natural fade out
-                fade_progress = elapsed / fade_duration
-                if fade_progress > 0.5:  # Start fading after halfway point
-                    fade_vol = max(0.0, 1.0 - ((fade_progress - 0.5) * 2))
-                    current_vol = self.channel_accel_response.get_volume()
-                    self.channel_accel_response.set_volume(current_vol * fade_vol)
-
-    def stop_all_sounds(self):
-        """Stop all sounds"""
-        self.channel_idle.stop()
-        self.channel_rumble_low.stop()
-        self.channel_rumble_mid.stop()
-        self.channel_whine_low_a.stop()
-        self.channel_whine_low_b.stop()
-        self.channel_whine_high_a.stop()
-        self.channel_whine_high_b.stop()
-        self.channel_accel_response.stop()
-        self.channel_decel_burble.stop()
-        self.channel_startup.stop()
-        self.channel_shift_sfx.stop()
-        
-        self.idle_is_fading = False
-        self.whine_low_crossfading = False
-        self.whine_high_crossfading = False
-        self.accel_response_fading = False
-
-    def fade_out_all_sounds(self, fade_ms):
-        """Fade out all sounds"""
-        if self.channel_idle.get_busy():
-            self.channel_idle.fadeout(fade_ms)
-        if self.channel_rumble_low.get_busy():
-            self.channel_rumble_low.fadeout(fade_ms)
-        if self.channel_rumble_mid.get_busy():
-            self.channel_rumble_mid.fadeout(fade_ms)
-        if self.channel_whine_low_a.get_busy():
-            self.channel_whine_low_a.fadeout(fade_ms)
-        if self.channel_whine_low_b.get_busy():
-            self.channel_whine_low_b.fadeout(fade_ms)
-        if self.channel_whine_high_a.get_busy():
-            self.channel_whine_high_a.fadeout(fade_ms)
-        if self.channel_whine_high_b.get_busy():
-            self.channel_whine_high_b.fadeout(fade_ms)
-        if self.channel_accel_response.get_busy():
-            self.channel_accel_response.fadeout(fade_ms)
-        if self.channel_decel_burble.get_busy():
-            self.channel_decel_burble.fadeout(fade_ms)
-        if self.channel_startup.get_busy():
-            self.channel_startup.fadeout(fade_ms)
-        if self.channel_shift_sfx.get_busy():
-            self.channel_shift_sfx.fadeout(fade_ms)
 
 class M4EngineSimulation:
     def __init__(self, sound_manager):
@@ -1449,7 +1094,7 @@ class SupraEngineSimulation:
         self.raw_throttle = 0.0
         self.ema_throttle = 0.0
         
-        # Rev gesture detection
+        # Rev gesture detection (adapted from M4)
         self.throttle_history = collections.deque(maxlen=20)
         self.in_potential_rev_gesture = False
         self.rev_gesture_start_time = 0.0
@@ -1462,6 +1107,10 @@ class SupraEngineSimulation:
         # Audio queue system
         self.audio_queue = None
         self.current_playing_sound_range = None
+        
+        # RPM simulation (adapted from M4)
+        self.simulated_rpm = SUPRA_RPM_IDLE
+        self.last_rev_sound_finish_time = 0.0
 
     def update(self, dt, new_raw_throttle):
         previous_raw_throttle = self.raw_throttle # Needed for rev gesture
@@ -1475,6 +1124,17 @@ class SupraEngineSimulation:
         self.sm.update_idle_fade(dt)
         self.sm.update_driving_crossfade()
 
+        # RPM simulation (adapted from M4)
+        is_rev_sound_playing = self.sm.channel_rev_sfx.get_busy()
+        
+        if not is_rev_sound_playing and current_time > self.last_rev_sound_finish_time + SUPRA_RPM_DECAY_COOLDOWN_AFTER_REV:
+            if self.simulated_rpm > SUPRA_RPM_IDLE:
+                self.simulated_rpm = max(SUPRA_RPM_IDLE, self.simulated_rpm - SUPRA_RPM_DECAY_RATE_PER_SEC * dt)
+        
+        if not is_rev_sound_playing and \
+           current_time > self.last_rev_sound_finish_time + SUPRA_RPM_RESET_TO_IDLE_THRESHOLD_TIME:
+            self.simulated_rpm = SUPRA_RPM_IDLE
+
         # State machine
         if self.state == "ENGINE_OFF":
             if self.raw_throttle > THROTTLE_DEADZONE_LOW + 0.05:
@@ -1484,6 +1144,8 @@ class SupraEngineSimulation:
                 self.sm.play_startup_sound()
                 self.raw_throttle = 0.0
                 self.ema_throttle = 0.0
+                self.simulated_rpm = SUPRA_RPM_IDLE
+                self.last_rev_sound_finish_time = current_time
 
         elif self.state == "STARTING":
             if not self.sm.channel_rev_sfx.get_busy():
@@ -1492,6 +1154,8 @@ class SupraEngineSimulation:
                 self.state_start_time = current_time
                 self.sm.set_idle_target_volume(SUPRA_NORMAL_IDLE_VOLUME)
                 self.sm.play_idle()
+                self.simulated_rpm = SUPRA_RPM_IDLE
+                self.last_rev_sound_finish_time = current_time
 
         elif self.state == "IDLE":
             self._handle_idle_state(current_time, previous_raw_throttle)
@@ -1637,178 +1301,24 @@ class SupraEngineSimulation:
                                    (self.raw_throttle <= THROTTLE_DEADZONE_LOW * 1.5)
             
             if is_falling_after_peak and self.peak_throttle_in_rev_gesture > THROTTLE_DEADZONE_LOW + 0.02:
+                current_gesture_peak_throttle = self.peak_throttle_in_rev_gesture
+                
                 self.in_potential_rev_gesture = False
                 self.rev_gesture_lockout_until_time = current_time + SUPRA_REV_RETRIGGER_LOCKOUT
-                if self.sm.play_rev_sound(self.peak_throttle_in_rev_gesture):
-                    self.sm.set_idle_target_volume(SUPRA_LOW_IDLE_VOLUME_DURING_REV)
-
-class HellcatEngineSimulation:
-    def __init__(self, sound_manager):
-        self.sm = sound_manager
-        self.state = "ENGINE_OFF"
-        
-        # Raw and EMA throttle values
-        self.raw_throttle = 0.0
-        self.smoothed_throttle = 0.0
-        self.previous_throttle = 0.0
-        
-        # Virtual engine physics
-        self.simulated_rpm = HELLCAT_IDLE_RPM
-        self.simulated_gear = 1
-        self.engine_load = 0.0
-        
-        # State tracking
-        self.state_start_time = 0.0
-        self.last_shift_time = 0.0
-        self.min_time_between_shifts = 1.5  # Minimum time between shifts in seconds
-
-    def update(self, dt, new_raw_throttle):
-        self.previous_throttle = self.raw_throttle
-        self.raw_throttle = new_raw_throttle
-        
-        # Update EMA throttle
-        self.smoothed_throttle = (HELLCAT_EMA_ALPHA * self.raw_throttle) + ((1 - HELLCAT_EMA_ALPHA) * self.smoothed_throttle)
-        
-        # Calculate engine load (rate of throttle change)
-        self.engine_load = self.raw_throttle - self.previous_throttle
-        
-        current_time = time.time()
-        self.sm.update(dt)
-
-        # State machine
-        if self.state == "ENGINE_OFF":
-            if self.raw_throttle > THROTTLE_DEADZONE_LOW + 0.05:
-                print("\nHellcat Engine Starting...")
-                self.state = "STARTING"
-                self.state_start_time = current_time
-                self.sm.play_startup_sound()
-                self.raw_throttle = 0.0
-                self.smoothed_throttle = 0.0
-                self.simulated_rpm = HELLCAT_IDLE_RPM
-
-        elif self.state == "STARTING":
-            if not self.sm.is_startup_busy():
-                print("\nHellcat Engine Idling.")
-                self.state = "IDLE"
-                self.state_start_time = current_time
-                self.sm.set_idle_target_volume(HELLCAT_NORMAL_IDLE_VOLUME)
-
-        elif self.state == "IDLE":
-            self._handle_idle_state(current_time, dt)
-
-        elif self.state == "DRIVING":
-            self._handle_driving_state(current_time, dt)
-
-        # Always update foundation layer when engine is running
-        if self.state not in ["ENGINE_OFF", "STARTING"]:
-            self.sm.play_foundation_layer(self.smoothed_throttle, self.simulated_rpm)
-            self.sm.play_character_layer(self.engine_load, self.simulated_rpm, self.smoothed_throttle)
-
-    def _handle_idle_state(self, current_time, dt):
-        """Handle IDLE state logic"""
-        self.sm.set_idle_target_volume(HELLCAT_NORMAL_IDLE_VOLUME)
-        
-        # Check if we should transition to driving
-        if self.smoothed_throttle > HELLCAT_THROTTLE_IDLE_THRESHOLD:
-            print(f"\nHellcat IDLE -> DRIVING (throttle: {self.smoothed_throttle:.3f})")
-            self.state = "DRIVING"
-            self.state_start_time = current_time
-        
-        # Update RPM decay to idle when not driving
-        if self.simulated_rpm > HELLCAT_IDLE_RPM:
-            self.simulated_rpm = max(HELLCAT_IDLE_RPM, self.simulated_rpm - HELLCAT_RPM_DECAY_COAST * dt)
-
-    def _handle_driving_state(self, current_time, dt):
-        """Handle DRIVING state with virtual engine physics"""
-        # Check if we should return to idle
-        if self.smoothed_throttle <= HELLCAT_THROTTLE_IDLE_THRESHOLD:
-            print("\nHellcat DRIVING -> IDLE")
-            self.state = "IDLE"
-            self.sm.set_idle_target_volume(HELLCAT_NORMAL_IDLE_VOLUME)
-            return
-        
-        # Update virtual RPM based on throttle and gear
-        if self.smoothed_throttle > HELLCAT_THROTTLE_IDLE_THRESHOLD:
-            # Acceleration
-            gear_multiplier = HELLCAT_GEAR_ACCEL_MULTIPLIERS.get(self.simulated_gear, 1.0)
-            rpm_increase = HELLCAT_RPM_ACCEL_BASE * self.smoothed_throttle * gear_multiplier * dt
-            self.simulated_rpm += rpm_increase
-        else:
-            # Deceleration (engine braking + coast)
-            gear_braking = HELLCAT_GEAR_ENGINE_BRAKING.get(self.simulated_gear, 500)
-            total_decay = HELLCAT_RPM_DECAY_COAST + gear_braking
-            self.simulated_rpm = max(HELLCAT_IDLE_RPM, self.simulated_rpm - total_decay * dt)
-        
-        # Handle upshifts (with timing constraint)
-        time_since_last_shift = current_time - self.last_shift_time
-        if (self.simulated_rpm >= HELLCAT_REDLINE_RPM and 
-            self.simulated_gear < 5 and 
-            time_since_last_shift >= self.min_time_between_shifts):
-            
-            print(f"Hellcat upshift: {self.simulated_gear} -> {self.simulated_gear + 1} at {self.simulated_rpm:.0f} RPM (time since last: {time_since_last_shift:.1f}s)")
-            if self.sm.play_upshift_sound():
-                self.sm.set_idle_target_volume(HELLCAT_LOW_IDLE_VOLUME_DURING_SHIFT)
-            
-            old_gear = self.simulated_gear
-            self.simulated_gear += 1
-            # Reset RPM to much lower value after upshift
-            new_rpm = 1800 + (self.simulated_gear * 100)  # 1900, 2000, 2100, 2200 for gears 2,3,4,5
-            print(f"RPM reset from {self.simulated_rpm:.0f} to {new_rpm:.0f}")
-            self.simulated_rpm = new_rpm
-            self.last_shift_time = current_time
-        elif self.simulated_rpm >= HELLCAT_REDLINE_RPM and self.simulated_gear < 5:
-            print(f"Upshift blocked - time constraint: {time_since_last_shift:.1f}s < {self.min_time_between_shifts}s")
-        
-        # Handle downshifts - improved logic for realistic throttle behavior
-        if (self.simulated_gear > 1 and 
-            current_time - self.last_shift_time >= self.min_time_between_shifts):
-            
-            downshift_threshold = HELLCAT_GEAR_DOWNSHIFT_THRESHOLDS.get(self.simulated_gear, 1500)
-            
-            # Scenario 1: Throttle reduction (partial or complete)
-            throttle_reduction_downshift = (
-                self.engine_load < -0.1 and  # Significant throttle reduction
-                self.simulated_rpm < downshift_threshold * 1.2  # Allow slightly higher RPM for throttle-induced downshift
-            )
-            
-            # Scenario 2: RPM naturally dropped too low for current gear (regardless of throttle)
-            natural_rpm_downshift = (
-                self.simulated_rpm < downshift_threshold and
-                self.smoothed_throttle < 0.6  # Don't downshift during heavy acceleration
-            )
-            
-            # Scenario 3: Coming to a stop (very low RPM, very low throttle)
-            stopping_downshift = (
-                self.simulated_rpm < 1200 and
-                self.smoothed_throttle < 0.1
-            )
-            
-            if throttle_reduction_downshift or natural_rpm_downshift or stopping_downshift:
-                print(f"Hellcat downshift: {self.simulated_gear} -> {self.simulated_gear - 1} at {self.simulated_rpm:.0f} RPM (throttle: {self.smoothed_throttle:.2f}, load: {self.engine_load:.2f})")
-                if self.sm.play_downshift_sound():
-                    self.sm.set_idle_target_volume(HELLCAT_LOW_IDLE_VOLUME_DURING_SHIFT)
+                rev_sound_info = self.sm.play_staged_rev(self.simulated_rpm, current_gesture_peak_throttle)
                 
-                self.simulated_gear -= 1
-                # Rev-match: blip RPM upward based on gear change
-                rev_match_increase = 600 + (self.simulated_gear * 100)  # More aggressive rev-match for higher gears
-                self.simulated_rpm = min(HELLCAT_REDLINE_RPM * 0.8, self.simulated_rpm + rev_match_increase)
-                self.last_shift_time = current_time
-        
-        # Restore idle volume after shift events
-        if not self.sm.is_shift_busy():
-            self.sm.set_idle_target_volume(HELLCAT_NORMAL_IDLE_VOLUME)
-class TripleCarSystem:
+                if rev_sound_info:
+                    self.simulated_rpm = rev_sound_info['rpm_peak']
+                    self.last_rev_sound_finish_time = current_time + rev_sound_info['duration']
+                    self.sm.set_idle_target_volume(SUPRA_LOW_IDLE_VOLUME_DURING_REV)
+class DualCarSystem:
     def __init__(self):
         self.m4_sound_manager = M4SoundManager()
         self.supra_sound_manager = SupraSoundManager()
-        self.hellcat_sound_manager = HellcatSoundManager()
         self.m4_engine = M4EngineSimulation(self.m4_sound_manager)
         self.supra_engine = SupraEngineSimulation(self.supra_sound_manager)
-        self.hellcat_engine = HellcatEngineSimulation(self.hellcat_sound_manager)
         
-        self.cars = ["M4", "Supra", "Hellcat"]
-        self.current_car_index = 0
-        self.current_car = self.cars[self.current_car_index]
+        self.current_car = "M4"
         self.switching_cars = False
         self.switch_start_time = 0
         
@@ -1820,22 +1330,15 @@ class TripleCarSystem:
         if self.switching_cars:
             return
         
-        # Cycle to next car
-        self.current_car_index = (self.current_car_index + 1) % len(self.cars)
-        new_car = self.cars[self.current_car_index]
-        old_car = self.current_car
-        
-        print(f"\nSwitching from {old_car} to {new_car}...")
+        new_car = "Supra" if self.current_car == "M4" else "M4"
+        print(f"\nSwitching from {self.current_car} to {new_car}...")
         self.switching_cars = True
         self.switch_start_time = time.time()
         
-        # Fade out current car's sounds
-        if old_car == "M4":
+        if self.current_car == "M4":
             self.m4_sound_manager.fade_out_all_sounds(SUPRA_CROSSFADE_DURATION_MS)
-        elif old_car == "Supra":
+        else:
             self.supra_sound_manager.fade_out_all_sounds(SUPRA_CROSSFADE_DURATION_MS)
-        else:  # Hellcat
-            self.hellcat_sound_manager.fade_out_all_sounds(SUPRA_CROSSFADE_DURATION_MS)
 
     def update(self, dt, raw_throttle):
         self.throttle_buffer.append(raw_throttle)
@@ -1845,58 +1348,33 @@ class TripleCarSystem:
         
         if self.switching_cars:
             if current_time - self.switch_start_time >= (SUPRA_CROSSFADE_DURATION_MS / 1000.0):
-                # Stop all sounds from previous car
                 if self.current_car == "M4":
                     self.m4_sound_manager.stop_all_sounds()
-                elif self.current_car == "Supra":
-                    self.supra_sound_manager.stop_all_sounds()
-                else:  # Hellcat
-                    self.hellcat_sound_manager.stop_all_sounds()
-                
-                # Switch to new car
-                self.current_car = self.cars[self.current_car_index]
-                
-                # Reset new car's engine state
-                if self.current_car == "M4":
-                    self.m4_engine.state = "ENGINE_OFF"
-                elif self.current_car == "Supra":
+                    self.current_car = "Supra"
                     self.supra_engine.state = "ENGINE_OFF"
-                else:  # Hellcat
-                    self.hellcat_engine.state = "ENGINE_OFF"
-                    self.hellcat_engine.simulated_rpm = HELLCAT_IDLE_RPM
-                    self.hellcat_engine.simulated_gear = 1
-                    self.hellcat_engine.last_shift_time = 0.0
+                    print("Switched to Supra")
+                else:
+                    self.supra_sound_manager.stop_all_sounds()
+                    self.current_car = "M4"
+                    self.m4_engine.state = "ENGINE_OFF"
+                    print("Switched to M4")
                 
-                print(f"Switched to {self.current_car}")
                 self.switching_cars = False
             else:
                 return smoothed_throttle, raw_throttle
         
-        # Update the active car's engine
         if self.current_car == "M4":
             self.m4_engine.update(dt, smoothed_throttle)
-        elif self.current_car == "Supra":
-            self.supra_engine.update(dt, raw_throttle)  # Pass raw throttle to Supra for gestures
-        else:  # Hellcat
-            self.hellcat_engine.update(dt, raw_throttle)  # Pass raw throttle to Hellcat for physics
+        else:
+            self.supra_engine.update(dt, raw_throttle) # Pass raw throttle to Supra for gestures
         
         return smoothed_throttle, raw_throttle
 
     def get_active_engine(self):
-        if self.current_car == "M4":
-            return self.m4_engine
-        elif self.current_car == "Supra":
-            return self.supra_engine
-        else:  # Hellcat
-            return self.hellcat_engine
+        return self.m4_engine if self.current_car == "M4" else self.supra_engine
 
     def get_active_sound_manager(self):
-        if self.current_car == "M4":
-            return self.m4_sound_manager
-        elif self.current_car == "Supra":
-            return self.supra_sound_manager
-        else:  # Hellcat
-            return self.hellcat_sound_manager
+        return self.m4_sound_manager if self.current_car == "M4" else self.supra_sound_manager
 
 class ThrottleSimulatorGUI:
     def __init__(self):
@@ -1906,7 +1384,7 @@ class ThrottleSimulatorGUI:
         self.root.configure(bg='#1e1e1e')
         
         self.throttle_value = tk.DoubleVar(value=0.0)
-        self.triple_car_system = None
+        self.dual_car_system = None
         self.simulation_thread = None
         self.running = False
         
@@ -1981,7 +1459,7 @@ class ThrottleSimulatorGUI:
                                     padx=20, pady=10, relief='raised', bd=2, state='disabled')
         self.stop_button.pack(side='left', padx=10)
         
-        self.switch_button = tk.Button(buttons_frame, text="Switch Car (M4 → Supra → Hellcat)", 
+        self.switch_button = tk.Button(buttons_frame, text="Switch Car (M4 ⇌ Supra)", 
                                       command=self.switch_car,
                                       font=('Arial', 12, 'bold'), bg='#2196F3', fg='white',
                                       padx=20, pady=10, relief='raised', bd=2, state='disabled')
@@ -2006,8 +1484,8 @@ class ThrottleSimulatorGUI:
                                  font=('Arial', 12), fg='#ffffff', bg='#2d2d2d')
         self.rpm_label.pack(pady=2)
         
-        # EMA Throttle display for Supra and Hellcat
-        self.ema_throttle_label = tk.Label(status_frame, text="Smoothed Throttle: N/A", 
+        # EMA Throttle display for Supra
+        self.ema_throttle_label = tk.Label(status_frame, text="EMA Throttle: N/A", 
                                           font=('Arial', 12), fg='#ffff00', bg='#2d2d2d')
         self.ema_throttle_label.pack(pady=2)
         
@@ -2016,15 +1494,10 @@ class ThrottleSimulatorGUI:
                                             font=('Arial', 12), fg='#ffaa00', bg='#2d2d2d')
         self.throttle_range_label.pack(pady=2)
         
-        # Audio queue status for Supra / Gear info for Hellcat
-        self.dynamic_info_label = tk.Label(status_frame, text="Info: N/A", 
+        # Audio queue status for Supra
+        self.audio_queue_label = tk.Label(status_frame, text="Audio Queue: N/A", 
                                          font=('Arial', 12), fg='#00aaff', bg='#2d2d2d')
-        self.dynamic_info_label.pack(pady=2)
-        
-        # Engine Load display for Hellcat
-        self.engine_load_label = tk.Label(status_frame, text="Engine Load: N/A", 
-                                         font=('Arial', 12), fg='#ff88aa', bg='#2d2d2d')
-        self.engine_load_label.pack(pady=2)
+        self.audio_queue_label.pack(pady=2)
         
         self.status_label = tk.Label(status_frame, text="Status: Ready", 
                                     font=('Arial', 12), fg='#00ff00', bg='#2d2d2d')
@@ -2065,9 +1538,8 @@ class ThrottleSimulatorGUI:
             try:
                 os.makedirs(M4_SOUND_FILES_PATH, exist_ok=True)
                 os.makedirs(SUPRA_SOUND_FILES_PATH, exist_ok=True)
-                os.makedirs(HELLCAT_SOUND_FILES_PATH, exist_ok=True)
                 
-                self.triple_car_system = TripleCarSystem()
+                self.dual_car_system = DualCarSystem()
                 self.running = True
                 
                 self.simulation_thread = threading.Thread(target=self.simulation_loop, daemon=True)
@@ -2087,10 +1559,9 @@ class ThrottleSimulatorGUI:
         if self.running:
             self.running = False
             
-            if self.triple_car_system:
-                self.triple_car_system.m4_sound_manager.stop_all_sounds()
-                self.triple_car_system.supra_sound_manager.stop_all_sounds()
-                self.triple_car_system.hellcat_sound_manager.stop_all_sounds()
+            if self.dual_car_system:
+                self.dual_car_system.m4_sound_manager.stop_all_sounds()
+                self.dual_car_system.supra_sound_manager.stop_all_sounds()
             
             self.start_button.config(state='normal')
             self.stop_button.config(state='disabled')
@@ -2099,17 +1570,16 @@ class ThrottleSimulatorGUI:
             self.car_label.config(text="Current Car: N/A")
             self.state_label.config(text="Engine State: N/A")
             self.rpm_label.config(text="Simulated RPM: N/A")
-            self.ema_throttle_label.config(text="Smoothed Throttle: N/A")
+            self.ema_throttle_label.config(text="EMA Throttle: N/A")
             self.throttle_range_label.config(text="Throttle Range: N/A")
-            self.dynamic_info_label.config(text="Info: N/A")
-            self.engine_load_label.config(text="Engine Load: N/A")
+            self.audio_queue_label.config(text="Audio Queue: N/A")
             self.status_label.config(text="Status: Simulation stopped", fg='#ffaa00')
             
             print("Simulation stopped")
 
     def switch_car(self):
-        if self.triple_car_system and self.running:
-            self.triple_car_system.switch_car()
+        if self.dual_car_system and self.running:
+            self.dual_car_system.switch_car()
 
     def simulation_loop(self):
         last_time = time.time()
@@ -2124,9 +1594,9 @@ class ThrottleSimulatorGUI:
             # Get throttle value (convert from 0-100 to 0-1)
             raw_throttle = self.throttle_value.get() / 100.0
             
-            # Update the triple car system
-            if self.triple_car_system:
-                smoothed_throttle, _ = self.triple_car_system.update(dt, raw_throttle)
+            # Update the dual car system
+            if self.dual_car_system:
+                smoothed_throttle, _ = self.dual_car_system.update(dt, raw_throttle)
                 
                 # Update GUI status
                 self.root.after(0, self.update_status_display, smoothed_throttle)
@@ -2137,66 +1607,39 @@ class ThrottleSimulatorGUI:
             time.sleep(sleep_duration)
 
     def update_status_display(self, throttle_value):
-        if self.triple_car_system and self.running:
-            active_engine = self.triple_car_system.get_active_engine()
-            current_car = self.triple_car_system.current_car
+        if self.dual_car_system and self.running:
+            active_engine = self.dual_car_system.get_active_engine()
+            current_car = self.dual_car_system.current_car
             
             self.car_label.config(text=f"Current Car: {current_car}")
             self.state_label.config(text=f"Engine State: {active_engine.state}")
             
             if hasattr(active_engine, 'simulated_rpm'):
-                rpm_value = active_engine.simulated_rpm
-                self.rpm_label.config(text=f"Simulated RPM: {rpm_value:.0f}")
-                # Debug: print RPM for Hellcat
-                if current_car == "Hellcat":
-                    print(f"GUI Debug - Hellcat RPM: {rpm_value:.0f}, State: {active_engine.state}, Gear: {getattr(active_engine, 'simulated_gear', 'N/A')}")
+                self.rpm_label.config(text=f"Simulated RPM: {active_engine.simulated_rpm:.0f}")
             else:
                 self.rpm_label.config(text="Simulated RPM: N/A")
-                if current_car == "Hellcat":
-                    print(f"GUI Debug - Hellcat has no simulated_rpm attribute")
             
-            # Display car-specific information
+            # Show EMA throttle and additional info for Supra
             if current_car == "Supra" and hasattr(active_engine, 'ema_throttle'):
-                # Supra-specific displays
                 ema_throttle = active_engine.ema_throttle
                 throttle_range = active_engine._get_throttle_range(ema_throttle)
                 
                 self.ema_throttle_label.config(text=f"EMA Throttle: {ema_throttle:.3f} ({ema_throttle*100:.1f}%)")
                 self.throttle_range_label.config(text=f"Throttle Range: {throttle_range}")
-                self.engine_load_label.config(text="Engine Load: N/A")
                 
                 # Show audio queue status
                 if hasattr(active_engine, 'audio_queue') and active_engine.audio_queue:
                     queue_info = active_engine.audio_queue
-                    self.dynamic_info_label.config(text=f"Audio Queue: {queue_info['range']} range queued")
+                    self.audio_queue_label.config(text=f"Audio Queue: {queue_info['range']} range queued")
                 elif hasattr(active_engine, 'current_playing_sound_range') and active_engine.current_playing_sound_range:
-                    self.dynamic_info_label.config(text=f"Audio Queue: Playing {active_engine.current_playing_sound_range}")
+                    self.audio_queue_label.config(text=f"Audio Queue: Playing {active_engine.current_playing_sound_range}")
                 else:
-                    self.dynamic_info_label.config(text="Audio Queue: Empty")
-            
-            elif current_car == "Hellcat":
-                # Hellcat-specific displays
-                if hasattr(active_engine, 'smoothed_throttle'):
-                    smoothed_throttle = active_engine.smoothed_throttle
-                    engine_load = active_engine.engine_load
-                    gear = active_engine.simulated_gear
-                    
-                    self.ema_throttle_label.config(text=f"Smoothed Throttle: {smoothed_throttle:.3f} ({smoothed_throttle*100:.1f}%)")
-                    self.throttle_range_label.config(text="Throttle Range: N/A")
-                    self.engine_load_label.config(text=f"Engine Load: {engine_load:+.3f}")
-                    self.dynamic_info_label.config(text=f"Current Gear: {gear}")
-                else:
-                    self.ema_throttle_label.config(text="Smoothed Throttle: N/A")
-                    self.throttle_range_label.config(text="Throttle Range: N/A")
-                    self.engine_load_label.config(text="Engine Load: N/A")
-                    self.dynamic_info_label.config(text="Current Gear: N/A")
-                
+                    self.audio_queue_label.config(text="Audio Queue: Empty")
             else:
-                # M4 or default displays
-                self.ema_throttle_label.config(text="Smoothed Throttle: N/A")
+                # Hide Supra-specific info for M4
+                self.ema_throttle_label.config(text="EMA Throttle: N/A")
                 self.throttle_range_label.config(text="Throttle Range: N/A")
-                self.engine_load_label.config(text="Engine Load: N/A")
-                self.dynamic_info_label.config(text="Info: N/A")
+                self.audio_queue_label.config(text="Audio Queue: N/A")
 
     def on_closing(self):
         global running_simulation
@@ -2218,7 +1661,7 @@ def main():
     print("================================")
     print("A GUI-based throttle simulator for testing engine sound logic")
     print("Use the slider to control throttle position dynamically")
-    print("Press 'Switch Car' to cycle between M4, Supra, and Hellcat engines")
+    print("Press 'Switch Car' to toggle between M4 and Supra engines")
     print("")
     
     # Check for sound files
@@ -2226,8 +1669,6 @@ def main():
         print(f"Warning: M4 sound directory '{M4_SOUND_FILES_PATH}' not found")
     if not os.path.exists(SUPRA_SOUND_FILES_PATH):
         print(f"Warning: Supra sound directory '{SUPRA_SOUND_FILES_PATH}' not found")
-    if not os.path.exists(HELLCAT_SOUND_FILES_PATH):
-        print(f"Warning: Hellcat sound directory '{HELLCAT_SOUND_FILES_PATH}' not found")
     
     try:
         app = ThrottleSimulatorGUI()
