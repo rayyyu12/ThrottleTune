@@ -103,16 +103,21 @@ HELLCAT_THROTTLE_IDLE_THRESHOLD = 0.05
 HELLCAT_FADE_IN_DURATION = 150  # milliseconds
 HELLCAT_FADE_OUT_DURATION = 300  # milliseconds
 
-# Hellcat Virtual Engine Physics
-HELLCAT_RPM_ACCEL_BASE = 4000
-HELLCAT_RPM_DECAY_COAST = 1000
+# Hellcat Virtual Engine Physics (Tuned for Electric Scooter Operation)
+HELLCAT_RPM_ACCEL_BASE = 1200          # Reduced from 4000 - much more realistic acceleration
+HELLCAT_RPM_DECAY_COAST = 2000         # Increased from 1000 - faster natural decay  
+HELLCAT_RPM_THROTTLE_LIFT_DECAY = 3500 # NEW - Aggressive engine braking on throttle release
 HELLCAT_IDLE_RPM = 750
 HELLCAT_REDLINE_RPM = 6200
 
-# Hellcat Gear-specific behavior
-HELLCAT_GEAR_ACCEL_MULTIPLIERS = {1: 1.8, 2: 1.3, 3: 1.0, 4: 0.8, 5: 0.7}
-HELLCAT_GEAR_ENGINE_BRAKING = {1: 1500, 2: 1000, 3: 700, 4: 500, 5: 400}
-HELLCAT_GEAR_DOWNSHIFT_THRESHOLDS = {2: 1200, 3: 1500, 4: 2000, 5: 2500}
+# Hellcat Gear-specific behavior (Adjusted for longer gear hold times)
+HELLCAT_GEAR_ACCEL_MULTIPLIERS = {1: 1.2, 2: 0.9, 3: 0.7, 4: 0.5, 5: 0.4}  # Reduced multipliers
+HELLCAT_GEAR_ENGINE_BRAKING = {1: 2000, 2: 1500, 3: 1200, 4: 800, 5: 600}   # Increased braking
+HELLCAT_GEAR_DOWNSHIFT_THRESHOLDS = {2: 1400, 3: 1800, 4: 2200, 5: 2800}    # Higher thresholds
+
+# Hellcat Audio Inertia (NEW - for smoother sound transitions)
+HELLCAT_AUDIO_INERTIA_SPEED = 3.0      # How fast audio volumes chase their targets
+HELLCAT_MIN_SHIFT_INTERVAL = 2.5       # Increased from 1.5 - longer between shifts
 
 # EMA Throttle Parameters for Hellcat
 HELLCAT_EMA_ALPHA = 0.2  # EMA smoothing factor (0 = no smoothing, 1 = no filtering)
@@ -1053,6 +1058,16 @@ class HellcatSoundManager:
         # Audio fade tracking
         self.accel_response_fade_start = 0
         self.accel_response_fading = False
+        
+        # NEW: Audio inertia system - current volumes chase target volumes
+        self.rumble_low_current_vol = 0.0
+        self.rumble_low_target_vol = 0.0
+        self.rumble_mid_current_vol = 0.0  
+        self.rumble_mid_target_vol = 0.0
+        self.whine_low_current_vol = 0.0
+        self.whine_low_target_vol = 0.0
+        self.whine_high_current_vol = 0.0
+        self.whine_high_target_vol = 0.0
 
     def _load_sound_with_duration(self, filename):
         path = os.path.join(HELLCAT_SOUND_FILES_PATH, filename)
@@ -1110,15 +1125,79 @@ class HellcatSoundManager:
             if self.channel_idle.get_sound():
                 self.channel_idle.set_volume(self.idle_current_volume * MASTER_ENGINE_VOL)
 
+    def _power_curve(self, input_val, power=2.2):
+        """Apply power curve for more natural volume transitions"""
+        return pow(max(0.0, min(1.0, input_val)), power)
+    
+    def _equal_power_crossfade(self, progress):
+        """Equal-power crossfade curve for smooth layer transitions"""
+        import math
+        fade_out = math.cos(progress * math.pi / 2)
+        fade_in = math.sin(progress * math.pi / 2) 
+        return fade_out, fade_in
+    
+    def _update_audio_inertia(self, dt):
+        """Update all audio inertia - volumes chase their targets smoothly"""
+        # Rumble low inertia
+        if abs(self.rumble_low_current_vol - self.rumble_low_target_vol) > 0.01:
+            if self.rumble_low_current_vol < self.rumble_low_target_vol:
+                self.rumble_low_current_vol = min(
+                    self.rumble_low_current_vol + HELLCAT_AUDIO_INERTIA_SPEED * dt,
+                    self.rumble_low_target_vol
+                )
+            else:
+                self.rumble_low_current_vol = max(
+                    self.rumble_low_current_vol - HELLCAT_AUDIO_INERTIA_SPEED * dt,
+                    self.rumble_low_target_vol
+                )
+        
+        # Rumble mid inertia
+        if abs(self.rumble_mid_current_vol - self.rumble_mid_target_vol) > 0.01:
+            if self.rumble_mid_current_vol < self.rumble_mid_target_vol:
+                self.rumble_mid_current_vol = min(
+                    self.rumble_mid_current_vol + HELLCAT_AUDIO_INERTIA_SPEED * dt,
+                    self.rumble_mid_target_vol
+                )
+            else:
+                self.rumble_mid_current_vol = max(
+                    self.rumble_mid_current_vol - HELLCAT_AUDIO_INERTIA_SPEED * dt,
+                    self.rumble_mid_target_vol
+                )
+        
+        # Whine low inertia
+        if abs(self.whine_low_current_vol - self.whine_low_target_vol) > 0.01:
+            if self.whine_low_current_vol < self.whine_low_target_vol:
+                self.whine_low_current_vol = min(
+                    self.whine_low_current_vol + HELLCAT_AUDIO_INERTIA_SPEED * dt,
+                    self.whine_low_target_vol
+                )
+            else:
+                self.whine_low_current_vol = max(
+                    self.whine_low_current_vol - HELLCAT_AUDIO_INERTIA_SPEED * dt,
+                    self.whine_low_target_vol
+                )
+        
+        # Whine high inertia
+        if abs(self.whine_high_current_vol - self.whine_high_target_vol) > 0.01:
+            if self.whine_high_current_vol < self.whine_high_target_vol:
+                self.whine_high_current_vol = min(
+                    self.whine_high_current_vol + HELLCAT_AUDIO_INERTIA_SPEED * dt,
+                    self.whine_high_target_vol
+                )
+            else:
+                self.whine_high_current_vol = max(
+                    self.whine_high_current_vol - HELLCAT_AUDIO_INERTIA_SPEED * dt,
+                    self.whine_high_target_vol
+                )
+
     def play_foundation_layer(self, smoothed_throttle, simulated_rpm):
-        """Play and manage all foundation layer sounds"""
-        # Idle sound
+        """ENHANCED: Play foundation layer with audio inertia and power curves"""
+        # Idle sound (unchanged - works well)
         idle_sound = self.sounds.get('idle')
         if idle_sound:
             if not self.channel_idle.get_busy() or self.channel_idle.get_sound() != idle_sound:
                 self.channel_idle.play(idle_sound, loops=-1)
             
-            # Volume control based on throttle
             if smoothed_throttle <= HELLCAT_THROTTLE_IDLE_THRESHOLD:
                 idle_volume = 1.0
             else:
@@ -1126,38 +1205,104 @@ class HellcatSoundManager:
             
             self.channel_idle.set_volume(idle_volume * self.idle_current_volume * MASTER_ENGINE_VOL)
         
-        # Rumble sounds crossfading
+        # ENHANCED: Rumble system with audio inertia and equal-power crossfading
         rumble_low = self.sounds.get('rumble_low')
         rumble_mid = self.sounds.get('rumble_mid')
         
         if smoothed_throttle > HELLCAT_THROTTLE_IDLE_THRESHOLD:
-            # Low RPM rumble
-            if rumble_low:
-                if not self.channel_rumble_low.get_busy() or self.channel_rumble_low.get_sound() != rumble_low:
-                    self.channel_rumble_low.play(rumble_low, loops=-1)
-                
-                # Volume based on throttle position
-                low_volume = max(0.0, min(1.0, (smoothed_throttle - HELLCAT_THROTTLE_IDLE_THRESHOLD) * 2))
-                if smoothed_throttle > 0.5:
-                    low_volume = max(0.0, low_volume - (smoothed_throttle - 0.5))
-                
-                self.channel_rumble_low.set_volume(low_volume * MASTER_ENGINE_VOL)
+            # Calculate crossfade progress between rumble layers
+            # Low rumble dominates 0-60% throttle, Mid rumble dominates 40-100% throttle
+            crossfade_start = 0.4
+            crossfade_end = 0.6
             
-            # Mid RPM rumble
-            if rumble_mid and smoothed_throttle > 0.3:
-                if not self.channel_rumble_mid.get_busy() or self.channel_rumble_mid.get_sound() != rumble_mid:
-                    self.channel_rumble_mid.play(rumble_mid, loops=-1)
+            if smoothed_throttle < crossfade_start:
+                # Pure low rumble
+                low_progress = (smoothed_throttle - HELLCAT_THROTTLE_IDLE_THRESHOLD) / (crossfade_start - HELLCAT_THROTTLE_IDLE_THRESHOLD)
+                self.rumble_low_target_vol = self._power_curve(low_progress, 1.8)
+                self.rumble_mid_target_vol = 0.0
+            elif smoothed_throttle > crossfade_end:
+                # Pure mid rumble  
+                mid_progress = (smoothed_throttle - crossfade_end) / (1.0 - crossfade_end)
+                self.rumble_low_target_vol = 0.0
+                self.rumble_mid_target_vol = self._power_curve(mid_progress, 2.5)
+            else:
+                # Crossfade zone - equal power crossfade
+                fade_progress = (smoothed_throttle - crossfade_start) / (crossfade_end - crossfade_start)
+                fade_out, fade_in = self._equal_power_crossfade(fade_progress)
+                base_progress = (smoothed_throttle - HELLCAT_THROTTLE_IDLE_THRESHOLD) / (1.0 - HELLCAT_THROTTLE_IDLE_THRESHOLD)
+                base_vol = self._power_curve(base_progress, 2.0)
                 
-                mid_volume = max(0.0, min(1.0, (smoothed_throttle - 0.3) * 1.5))
-                self.channel_rumble_mid.set_volume(mid_volume * MASTER_ENGINE_VOL)
+                self.rumble_low_target_vol = base_vol * fade_out
+                self.rumble_mid_target_vol = base_vol * fade_in
+            
+            # Start/manage rumble channels
+            if rumble_low and self.rumble_low_target_vol > 0.01:
+                if not self.channel_rumble_low.get_busy():
+                    self.channel_rumble_low.play(rumble_low, loops=-1)
+                self.channel_rumble_low.set_volume(self.rumble_low_current_vol * MASTER_ENGINE_VOL)
+            else:
+                self.channel_rumble_low.stop()
+                
+            if rumble_mid and self.rumble_mid_target_vol > 0.01:
+                if not self.channel_rumble_mid.get_busy():
+                    self.channel_rumble_mid.play(rumble_mid, loops=-1) 
+                self.channel_rumble_mid.set_volume(self.rumble_mid_current_vol * MASTER_ENGINE_VOL)
             else:
                 self.channel_rumble_mid.stop()
         else:
-            self.channel_rumble_low.stop()
-            self.channel_rumble_mid.stop()
+            # Idle - fade out targets
+            self.rumble_low_target_vol = 0.0
+            self.rumble_mid_target_vol = 0.0
+            if self.rumble_low_current_vol < 0.01:
+                self.channel_rumble_low.stop()
+            if self.rumble_mid_current_vol < 0.01:
+                self.channel_rumble_mid.stop()
         
-        # Supercharger whine with two-channel crossfading
-        self._update_whine_sounds(smoothed_throttle, simulated_rpm)
+        # ENHANCED: Supercharger whine with power curves and inertia
+        self._update_whine_sounds_enhanced(smoothed_throttle, simulated_rpm)
+    
+    def _update_whine_sounds_enhanced(self, smoothed_throttle, simulated_rpm):
+        """ENHANCED: Supercharger whine with audio inertia and power curves"""
+        whine_low = self.sounds.get('whine_low')
+        whine_high = self.sounds.get('whine_high')
+        
+        if smoothed_throttle > HELLCAT_THROTTLE_IDLE_THRESHOLD:
+            # Enhanced whine volume calculation with power curves and RPM influence
+            base_intensity = self._power_curve(smoothed_throttle, 1.6)
+            rpm_factor = min(1.0, (simulated_rpm - HELLCAT_IDLE_RPM) / (HELLCAT_REDLINE_RPM - HELLCAT_IDLE_RPM))
+            rpm_boost = 0.3 * self._power_curve(rpm_factor, 1.2)
+            
+            # Low RPM whine - stronger at lower throttle, fades as high whine takes over
+            if whine_low:
+                low_throttle_factor = max(0.0, 1.0 - (smoothed_throttle - 0.3) / 0.4)  # Fades 30-70%
+                self.whine_low_target_vol = (base_intensity + rpm_boost) * low_throttle_factor * 0.8
+                
+                self._manage_whine_crossfade('low', whine_low, smoothed_throttle)
+                self.whine_low_active_channel.set_volume(self.whine_low_current_vol * MASTER_ENGINE_VOL)
+            
+            # High RPM whine - starts at 40% throttle, dominates at high throttle  
+            if whine_high and smoothed_throttle > 0.4:
+                high_progress = (smoothed_throttle - 0.4) / 0.6
+                high_intensity = self._power_curve(high_progress, 2.0)
+                self.whine_high_target_vol = (high_intensity + rpm_boost) * 1.0
+                
+                self._manage_whine_crossfade('high', whine_high, smoothed_throttle)
+                self.whine_high_active_channel.set_volume(self.whine_high_current_vol * MASTER_ENGINE_VOL)
+            else:
+                self.whine_high_target_vol = 0.0
+                if self.whine_high_current_vol < 0.01:
+                    self.channel_whine_high_a.stop()
+                    self.channel_whine_high_b.stop()
+        else:
+            # Idle - fade out targets
+            self.whine_low_target_vol = 0.0
+            self.whine_high_target_vol = 0.0
+            if self.whine_low_current_vol < 0.01:
+                self.channel_whine_low_a.stop()
+                self.channel_whine_low_b.stop()
+            if self.whine_high_current_vol < 0.01:
+                self.channel_whine_high_a.stop()
+                self.channel_whine_high_b.stop()
 
     def _update_whine_sounds(self, smoothed_throttle, simulated_rpm):
         """Handle supercharger whine with two-channel crossfading"""
@@ -1330,8 +1475,11 @@ class HellcatSoundManager:
         return self.channel_shift_sfx.get_busy()
 
     def update(self, dt):
-        """Update fades and other time-based effects"""
+        """ENHANCED: Update fades and audio inertia system"""
         self.update_idle_fade(dt)
+        
+        # NEW: Update audio inertia - volumes chase targets smoothly
+        self._update_audio_inertia(dt)
         
         # Update accel response fade
         if self.accel_response_fading and self.channel_accel_response.get_busy():
@@ -1888,7 +2036,7 @@ class HellcatEngineSimulation:
         # State tracking
         self.state_start_time = 0.0
         self.last_shift_time = 0.0
-        self.min_time_between_shifts = 1.5  # Minimum time between shifts in seconds
+        self.min_time_between_shifts = HELLCAT_MIN_SHIFT_INTERVAL  # Use the new constant
 
     def update(self, dt, new_raw_throttle):
         self.previous_throttle = self.raw_throttle
@@ -1955,17 +2103,26 @@ class HellcatEngineSimulation:
             self.sm.set_idle_target_volume(HELLCAT_NORMAL_IDLE_VOLUME)
             return
         
-        # Update virtual RPM based on throttle and gear
+        # ENHANCED: Virtual RPM physics tuned for electric scooter operation
         if self.smoothed_throttle > HELLCAT_THROTTLE_IDLE_THRESHOLD:
-            # Acceleration
+            # Acceleration with realistic inertia
             gear_multiplier = HELLCAT_GEAR_ACCEL_MULTIPLIERS.get(self.simulated_gear, 1.0)
             rpm_increase = HELLCAT_RPM_ACCEL_BASE * self.smoothed_throttle * gear_multiplier * dt
             self.simulated_rpm += rpm_increase
         else:
-            # Deceleration (engine braking + coast)
+            # ENHANCED: Much more aggressive deceleration, especially on throttle lift
             gear_braking = HELLCAT_GEAR_ENGINE_BRAKING.get(self.simulated_gear, 500)
-            total_decay = HELLCAT_RPM_DECAY_COAST + gear_braking
+            
+            # If throttle was just released (negative engine load), apply aggressive braking
+            if self.engine_load < -0.05:
+                total_decay = HELLCAT_RPM_THROTTLE_LIFT_DECAY + gear_braking  # Much faster
+            else:
+                total_decay = HELLCAT_RPM_DECAY_COAST + gear_braking  # Normal coast
+            
             self.simulated_rpm = max(HELLCAT_IDLE_RPM, self.simulated_rpm - total_decay * dt)
+        
+        # CRITICAL: Cap RPM at redline regardless of gear (fixes infinite RPM in 5th gear)
+        self.simulated_rpm = min(self.simulated_rpm, HELLCAT_REDLINE_RPM)
         
         # Handle upshifts (with timing constraint)
         time_since_last_shift = current_time - self.last_shift_time
@@ -1987,39 +2144,48 @@ class HellcatEngineSimulation:
         elif self.simulated_rpm >= HELLCAT_REDLINE_RPM and self.simulated_gear < 5:
             print(f"Upshift blocked - time constraint: {time_since_last_shift:.1f}s < {self.min_time_between_shifts}s")
         
-        # Handle downshifts - improved logic for realistic throttle behavior
+        # ENHANCED: Downshift logic tuned for electric scooter (more responsive)
         if (self.simulated_gear > 1 and 
             current_time - self.last_shift_time >= self.min_time_between_shifts):
             
             downshift_threshold = HELLCAT_GEAR_DOWNSHIFT_THRESHOLDS.get(self.simulated_gear, 1500)
             
-            # Scenario 1: Throttle reduction (partial or complete)
-            throttle_reduction_downshift = (
-                self.engine_load < -0.1 and  # Significant throttle reduction
-                self.simulated_rpm < downshift_threshold * 1.2  # Allow slightly higher RPM for throttle-induced downshift
+            # Scenario 1: IMMEDIATE throttle release downshift (electric scooter pattern)
+            immediate_throttle_release = (
+                self.engine_load < -0.15 and  # Significant throttle reduction
+                self.simulated_rpm < downshift_threshold * 1.4  # More generous RPM range
             )
             
-            # Scenario 2: RPM naturally dropped too low for current gear (regardless of throttle)
+            # Scenario 2: RPM naturally dropped too low for current gear
             natural_rpm_downshift = (
                 self.simulated_rpm < downshift_threshold and
-                self.smoothed_throttle < 0.6  # Don't downshift during heavy acceleration
+                self.smoothed_throttle < 0.4  # More liberal threshold
             )
             
             # Scenario 3: Coming to a stop (very low RPM, very low throttle)
             stopping_downshift = (
-                self.simulated_rpm < 1200 and
-                self.smoothed_throttle < 0.1
+                self.simulated_rpm < 1400 and  # Higher threshold for easier downshifting
+                self.smoothed_throttle < 0.15
             )
             
-            if throttle_reduction_downshift or natural_rpm_downshift or stopping_downshift:
-                print(f"Hellcat downshift: {self.simulated_gear} -> {self.simulated_gear - 1} at {self.simulated_rpm:.0f} RPM (throttle: {self.smoothed_throttle:.2f}, load: {self.engine_load:.2f})")
+            # NEW Scenario 4: Sustained low throttle after being at high throttle
+            sustained_low_throttle = (
+                self.smoothed_throttle < 0.1 and
+                self.simulated_rpm < downshift_threshold * 1.3 and
+                current_time - self.last_shift_time >= self.min_time_between_shifts * 0.7  # Shorter wait
+            )
+            
+            if immediate_throttle_release or natural_rpm_downshift or stopping_downshift or sustained_low_throttle:
+                downshift_type = "immediate" if immediate_throttle_release else "natural" if natural_rpm_downshift else "stopping" if stopping_downshift else "sustained"
+                print(f"Hellcat {downshift_type} downshift: {self.simulated_gear} -> {self.simulated_gear - 1} at {self.simulated_rpm:.0f} RPM (throttle: {self.smoothed_throttle:.2f}, load: {self.engine_load:.2f})")
+                
                 if self.sm.play_downshift_sound():
                     self.sm.set_idle_target_volume(HELLCAT_LOW_IDLE_VOLUME_DURING_SHIFT)
                 
                 self.simulated_gear -= 1
-                # Rev-match: blip RPM upward based on gear change
-                rev_match_increase = 600 + (self.simulated_gear * 100)  # More aggressive rev-match for higher gears
-                self.simulated_rpm = min(HELLCAT_REDLINE_RPM * 0.8, self.simulated_rpm + rev_match_increase)
+                # Enhanced rev-match with more realistic blip
+                rev_match_increase = 400 + (self.simulated_gear * 150)  # More realistic rev-match
+                self.simulated_rpm = min(HELLCAT_REDLINE_RPM * 0.75, self.simulated_rpm + rev_match_increase)
                 self.last_shift_time = current_time
         
         # Restore idle volume after shift events
