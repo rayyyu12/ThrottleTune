@@ -1659,6 +1659,8 @@ class HellcatEngineSimulation:
         
         # State tracking
         self.state_start_time = 0.0
+        self.last_shift_time = 0.0
+        self.min_time_between_shifts = 0.8  # Minimum time between shifts in seconds
 
     def update(self, dt, new_raw_throttle):
         self.previous_throttle = self.raw_throttle
@@ -1737,26 +1739,54 @@ class HellcatEngineSimulation:
             total_decay = HELLCAT_RPM_DECAY_COAST + gear_braking
             self.simulated_rpm = max(HELLCAT_IDLE_RPM, self.simulated_rpm - total_decay * dt)
         
-        # Handle upshifts
-        if self.simulated_rpm >= HELLCAT_REDLINE_RPM and self.simulated_gear < 5:
+        # Handle upshifts (with timing constraint)
+        if (self.simulated_rpm >= HELLCAT_REDLINE_RPM and 
+            self.simulated_gear < 5 and 
+            current_time - self.last_shift_time >= self.min_time_between_shifts):
+            
             print(f"Hellcat upshift: {self.simulated_gear} -> {self.simulated_gear + 1} at {self.simulated_rpm:.0f} RPM")
             if self.sm.play_upshift_sound():
                 self.sm.set_idle_target_volume(HELLCAT_LOW_IDLE_VOLUME_DURING_SHIFT)
             
             self.simulated_gear += 1
-            self.simulated_rpm = 4500  # Reset RPM after upshift
+            # Reset RPM to much lower value to prevent immediate next upshift
+            self.simulated_rpm = 3000 + (self.simulated_gear * 200)  # 3200, 3400, 3600, 3800 for gears 2,3,4,5
+            self.last_shift_time = current_time
         
-        # Handle downshifts (only when off-throttle and RPM is low for current gear)
-        if self.engine_load < 0 and self.simulated_gear > 1:
+        # Handle downshifts - improved logic for realistic throttle behavior
+        if (self.simulated_gear > 1 and 
+            current_time - self.last_shift_time >= self.min_time_between_shifts):
+            
             downshift_threshold = HELLCAT_GEAR_DOWNSHIFT_THRESHOLDS.get(self.simulated_gear, 1500)
-            if self.simulated_rpm < downshift_threshold:
-                print(f"Hellcat downshift: {self.simulated_gear} -> {self.simulated_gear - 1} at {self.simulated_rpm:.0f} RPM")
+            
+            # Scenario 1: Throttle reduction (partial or complete)
+            throttle_reduction_downshift = (
+                self.engine_load < -0.1 and  # Significant throttle reduction
+                self.simulated_rpm < downshift_threshold * 1.2  # Allow slightly higher RPM for throttle-induced downshift
+            )
+            
+            # Scenario 2: RPM naturally dropped too low for current gear (regardless of throttle)
+            natural_rpm_downshift = (
+                self.simulated_rpm < downshift_threshold and
+                self.smoothed_throttle < 0.6  # Don't downshift during heavy acceleration
+            )
+            
+            # Scenario 3: Coming to a stop (very low RPM, very low throttle)
+            stopping_downshift = (
+                self.simulated_rpm < 1200 and
+                self.smoothed_throttle < 0.1
+            )
+            
+            if throttle_reduction_downshift or natural_rpm_downshift or stopping_downshift:
+                print(f"Hellcat downshift: {self.simulated_gear} -> {self.simulated_gear - 1} at {self.simulated_rpm:.0f} RPM (throttle: {self.smoothed_throttle:.2f}, load: {self.engine_load:.2f})")
                 if self.sm.play_downshift_sound():
                     self.sm.set_idle_target_volume(HELLCAT_LOW_IDLE_VOLUME_DURING_SHIFT)
                 
                 self.simulated_gear -= 1
-                # Rev-match: blip RPM upward
-                self.simulated_rpm = min(HELLCAT_REDLINE_RPM, self.simulated_rpm + 800)
+                # Rev-match: blip RPM upward based on gear change
+                rev_match_increase = 600 + (self.simulated_gear * 100)  # More aggressive rev-match for higher gears
+                self.simulated_rpm = min(HELLCAT_REDLINE_RPM * 0.8, self.simulated_rpm + rev_match_increase)
+                self.last_shift_time = current_time
         
         # Restore idle volume after shift events
         if not self.sm.is_shift_busy():
@@ -1827,6 +1857,9 @@ class TripleCarSystem:
                     self.supra_engine.state = "ENGINE_OFF"
                 else:  # Hellcat
                     self.hellcat_engine.state = "ENGINE_OFF"
+                    self.hellcat_engine.simulated_rpm = HELLCAT_IDLE_RPM
+                    self.hellcat_engine.simulated_gear = 1
+                    self.hellcat_engine.last_shift_time = 0.0
                 
                 print(f"Switched to {self.current_car}")
                 self.switching_cars = False
