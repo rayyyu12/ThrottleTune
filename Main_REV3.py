@@ -1744,15 +1744,15 @@ class M4EngineSimulation:
         elif self.state == "DECELERATING":
             self.sm.set_idle_target_volume(0.0, instant=True)
             # FIX: Handle mid-downshift acceleration properly
-            if self.current_throttle >= 0.98:  # Full throttle - go back to acceleration
-                if self.state != "ACCELERATING": print("\nM4 Back to Accelerating (from decel)...")
+            if self.current_throttle >= 0.95:  # High throttle - go back to acceleration
+                if self.state != "ACCELERATING": print(f"\nM4 Back to Accelerating (from decel) - throttle: {self.current_throttle:.3f}")
                 self.state = "ACCELERATING"
                 # Stop downshift and start acceleration
                 self.sm.stop_long_sequence(fade_ms=100)
                 time.sleep(0.05)
                 self.sm.play_long_sequence('accel_gears', start_offset=M4_ACCELERATION_SOUND_OFFSET, transition_from_other=False)
                 self.played_full_accel_sequence_recently = True
-            elif self.current_throttle >= 0.90 and not self.sm.transitioning_long_sound:
+            elif self.current_throttle >= 0.85 and not self.sm.transitioning_long_sound:
                 if self.state != "CRUISING": print("\nM4 Back to Cruising (from decel)...")
                 self.state = "CRUISING"
                 # FIX: Use stop-then-play instead of crossfade to prevent audio overload
