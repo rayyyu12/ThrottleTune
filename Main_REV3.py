@@ -1068,6 +1068,10 @@ class HellcatSoundManager:
         self.whine_low_target_vol = 0.0
         self.whine_high_current_vol = 0.0
         self.whine_high_target_vol = 0.0
+        
+        # NEW: Rev queue system - allows queueing up to 3 revs
+        self.rev_queue = []
+        self.max_rev_queue_size = 3
 
     def _load_sound_with_duration(self, filename):
         path = os.path.join(HELLCAT_SOUND_FILES_PATH, filename)
@@ -1480,19 +1484,43 @@ class HellcatSoundManager:
         return self.channel_shift_sfx.get_busy()
     
     def play_simple_rev(self):
-        """Play a randomly selected rev sound (simple system)"""
+        """Queue a rev sound or play immediately if not busy"""
         rev_sounds = ['rev_1', 'rev_2', 'rev_3']
         selected_sound_key = random.choice(rev_sounds)
-        rev_sound = self.sounds.get(selected_sound_key)
         
+        if not self.channel_shift_sfx.get_busy():
+            # Channel is free, play immediately
+            return self._play_rev_now(selected_sound_key)
+        else:
+            # Channel is busy, add to queue if not full
+            if len(self.rev_queue) < self.max_rev_queue_size:
+                self.rev_queue.append(selected_sound_key)
+                print(f"Hellcat rev queued: {selected_sound_key} (queue: {len(self.rev_queue)}/3)")
+                return True
+            else:
+                print(f"Hellcat rev queue full, dropping: {selected_sound_key}")
+                return False
+    
+    def _play_rev_now(self, sound_key):
+        """Play a rev sound immediately"""
+        rev_sound = self.sounds.get(sound_key)
         if rev_sound:
-            # Use the shift SFX channel for revs (they don't overlap with shifts during idle)
             self.channel_shift_sfx.stop()
             self.channel_shift_sfx.set_volume(MASTER_ENGINE_VOL)
             self.channel_shift_sfx.play(rev_sound)
-            print(f"Hellcat simple rev: {selected_sound_key}")
+            print(f"Hellcat rev playing: {sound_key}")
             return True
         return False
+    
+    def _process_rev_queue(self):
+        """Process queued rev sounds when channel becomes free"""
+        if not self.channel_shift_sfx.get_busy() and self.rev_queue:
+            next_rev = self.rev_queue.pop(0)  # Remove first item from queue
+            self._play_rev_now(next_rev)
+            if self.rev_queue:
+                print(f"Hellcat rev queue remaining: {len(self.rev_queue)}")
+            else:
+                print("Hellcat rev queue empty")
     
     def is_rev_busy(self):
         """Check if a rev sound is playing (shares shift channel)"""
@@ -1501,6 +1529,9 @@ class HellcatSoundManager:
     def update(self, dt):
         """ENHANCED: Update fades and audio inertia system"""
         self.update_idle_fade(dt)
+        
+        # Process queued rev sounds
+        self._process_rev_queue()
         
         # NEW: Update audio inertia - volumes chase targets smoothly
         self._update_audio_inertia(dt)
@@ -1564,6 +1595,15 @@ class HellcatSoundManager:
             self.channel_startup.fadeout(fade_ms)
         if self.channel_shift_sfx.get_busy():
             self.channel_shift_sfx.fadeout(fade_ms)
+        
+        # Clear rev queue when fading out all sounds
+        self.clear_rev_queue()
+    
+    def clear_rev_queue(self):
+        """Clear all queued revs"""
+        if self.rev_queue:
+            print(f"Hellcat clearing {len(self.rev_queue)} queued revs")
+            self.rev_queue.clear()
 
 class M4EngineSimulation:
     def __init__(self, sound_manager):
