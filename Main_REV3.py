@@ -1711,30 +1711,45 @@ class M4EngineSimulation:
             if self.current_throttle < 0.90:
                 if self.state != "DECELERATING": print("\nM4 Decelerating...")
                 self.state = "DECELERATING"
-                self.sm.play_long_sequence('decel_downshifts', transition_from_other=True)
+                # FIX: Use stop-then-play instead of crossfade to prevent audio overload
+                self.sm.stop_long_sequence(fade_ms=100)  # Quick fade out
+                time.sleep(0.05)  # Brief pause to let fade complete
+                self.sm.play_long_sequence('decel_downshifts', transition_from_other=False)
             elif not self.sm.is_long_sequence_busy() and not self.sm.transitioning_long_sound:
                 if self.current_throttle >= 0.90:
                     if self.state != "CRUISING": print("\nM4 Cruising...")
                     self.state = "CRUISING"
-                    self.sm.play_long_sequence('cruising', loops=-1, transition_from_other=True)
+                    # FIX: Use stop-then-play instead of crossfade to prevent audio overload
+                    self.sm.stop_long_sequence(fade_ms=100)  # Quick fade out
+                    time.sleep(0.05)  # Brief pause to let fade complete
+                    self.sm.play_long_sequence('cruising', loops=-1, transition_from_other=False)
                 else:
                     if self.state != "DECELERATING": print("\nM4 Decelerating (from accel end)...")
                     self.state = "DECELERATING"
-                    self.sm.play_long_sequence('decel_downshifts', transition_from_other=True)
+                    # FIX: Use stop-then-play instead of crossfade to prevent audio overload
+                    self.sm.stop_long_sequence(fade_ms=100)  # Quick fade out
+                    time.sleep(0.05)  # Brief pause to let fade complete
+                    self.sm.play_long_sequence('decel_downshifts', transition_from_other=False)
 
         elif self.state == "CRUISING":
             self.sm.set_idle_target_volume(0.0, instant=True)
             if self.current_throttle < 0.90:
                 if self.state != "DECELERATING": print("\nM4 Decelerating (from cruise)...")
                 self.state = "DECELERATING"
-                self.sm.play_long_sequence('decel_downshifts', transition_from_other=True)
+                # FIX: Use stop-then-play instead of crossfade to prevent audio overload
+                self.sm.stop_long_sequence(fade_ms=100)  # Quick fade out
+                time.sleep(0.05)  # Brief pause to let fade complete
+                self.sm.play_long_sequence('decel_downshifts', transition_from_other=False)
 
         elif self.state == "DECELERATING":
             self.sm.set_idle_target_volume(0.0, instant=True)
             if self.current_throttle >= 0.95 and not self.sm.transitioning_long_sound:
                 if self.state != "CRUISING": print("\nM4 Back to Cruising (from decel)...")
                 self.state = "CRUISING"
-                self.sm.play_long_sequence('cruising', loops=-1, transition_from_other=True)
+                # FIX: Use stop-then-play instead of crossfade to prevent audio overload
+                self.sm.stop_long_sequence(fade_ms=100)  # Quick fade out
+                time.sleep(0.05)  # Brief pause to let fade complete
+                self.sm.play_long_sequence('cruising', loops=-1, transition_from_other=False)
                 self.played_full_accel_sequence_recently = True
             elif not self.sm.is_long_sequence_busy() and not self.sm.transitioning_long_sound:
                 if self.state != "IDLING": print("\nM4 Back to Idling (from decel end).")
