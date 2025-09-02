@@ -429,7 +429,7 @@ class M4SoundManager:
             print(f"M4 Playing rev: {selected_stage_info['key']} (Peak: {selected_stage_info['rpm_peak']}) | CurrentRPM: {current_rpm:.0f} | Gesture: {gesture_peak_throttle:.2f}")
             self.channel_staged_rev.set_volume(M4_STAGED_REV_VOLUME * MASTER_ENGINE_VOL)
             self.channel_staged_rev.play(selected_stage_info['sound'])
-            return {'rpm_peak': selected_stage_info['rpm_peak'], 'duration': selected_stage_info['duration']}
+            return {'key': selected_stage_info['key'], 'rpm_peak': selected_stage_info['rpm_peak'], 'duration': selected_stage_info['duration']}
         return None
 
     def play_turbo_or_limiter_sfx(self, sound_key): 
@@ -929,7 +929,7 @@ class SupraSoundManager:
             print(f"Supra Playing rev: {selected_stage_info['key']} (Peak: {selected_stage_info['rpm_peak']}) | CurrentRPM: {current_rpm:.0f} | Gesture: {gesture_peak_throttle:.2f}")
             self.channel_rev_sfx.set_volume(SUPRA_STAGED_REV_VOLUME * MASTER_ENGINE_VOL)
             self.channel_rev_sfx.play(selected_stage_info['sound'])
-            return {'rpm_peak': selected_stage_info['rpm_peak'], 'duration': selected_stage_info['duration']}
+            return {'key': selected_stage_info['key'], 'rpm_peak': selected_stage_info['rpm_peak'], 'duration': selected_stage_info['duration']}
         return None
     
     def play_rev_sound(self, peak_throttle):
@@ -1743,7 +1743,16 @@ class M4EngineSimulation:
 
         elif self.state == "DECELERATING":
             self.sm.set_idle_target_volume(0.0, instant=True)
-            if self.current_throttle >= 0.95 and not self.sm.transitioning_long_sound:
+            # FIX: Handle mid-downshift acceleration properly
+            if self.current_throttle >= 0.98:  # Full throttle - go back to acceleration
+                if self.state != "ACCELERATING": print("\nM4 Back to Accelerating (from decel)...")
+                self.state = "ACCELERATING"
+                # Stop downshift and start acceleration
+                self.sm.stop_long_sequence(fade_ms=100)
+                time.sleep(0.05)
+                self.sm.play_long_sequence('accel_gears', start_offset=M4_ACCELERATION_SOUND_OFFSET, transition_from_other=False)
+                self.played_full_accel_sequence_recently = True
+            elif self.current_throttle >= 0.90 and not self.sm.transitioning_long_sound:
                 if self.state != "CRUISING": print("\nM4 Back to Cruising (from decel)...")
                 self.state = "CRUISING"
                 # FIX: Use stop-then-play instead of crossfade to prevent audio overload
@@ -2087,7 +2096,7 @@ class SupraEngineSimulation:
                     self.simulated_rpm = rev_sound_info['rpm_peak']
                     self.last_rev_sound_finish_time = current_time + rev_sound_info['duration']
                     self.sm.set_idle_target_volume(SUPRA_LOW_IDLE_VOLUME_DURING_REV)
-                    print(f"Supra rev played: {rev_sound_info['sound_name']} (RPM: {rev_sound_info['rpm_peak']})")
+                    print(f"Supra rev played: {rev_sound_info['key']} (RPM: {rev_sound_info['rpm_peak']})")
             elif is_falling_after_peak:
                 # Rev gesture completed but was too small - cancel it
                 print(f"Supra rev gesture CANCELLED: peak {self.peak_throttle_in_rev_gesture:.3f} < threshold {min_rev_threshold:.3f}")
