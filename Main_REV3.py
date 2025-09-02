@@ -1725,7 +1725,10 @@ class M4EngineSimulation:
 
         elif self.state == "LAUNCH_HOLD":
             self.sm.set_idle_target_volume(M4_VERY_LOW_IDLE_VOLUME_DURING_LAUNCH, instant=True)
+            
+            # --- FIX #1: Corrected Launch Hold Exit Logic ---
             if self.current_throttle >= 0.98:
+                # This is a LAUNCH - go directly to ACCELERATING
                 print("\nM4 Launching!")
                 self.state = "ACCELERATING"
                 self.sm.stop_launch_control_sequence(fade_ms=0) 
@@ -1736,7 +1739,8 @@ class M4EngineSimulation:
                 self.last_rev_sound_finish_time = current_time
             elif not (M4_LAUNCH_CONTROL_THROTTLE_MIN < self.current_throttle < M4_LAUNCH_CONTROL_THROTTLE_MAX) or \
                  not self.sm.is_launch_control_active():
-                if self.sm.is_launch_control_active(): # Check before stopping sounds
+                # This is a DISENGAGE (by letting go of throttle) - only go to IDLING if throttle is low
+                if self.sm.is_launch_control_active():
                     print("\nM4 Launch Control Disengaged.")
                 self.state = "IDLING"
                 self.sm.stop_launch_control_sequence()
@@ -1783,25 +1787,22 @@ class M4EngineSimulation:
 
         elif self.state == "DECELERATING":
             self.sm.set_idle_target_volume(0.0, instant=True)
-            # FIX: Handle mid-downshift acceleration properly
-            if self.current_throttle >= 0.95:  # High throttle - go back to acceleration
-                if self.state != "ACCELERATING": print(f"\nM4 Back to Accelerating (from decel) - throttle: {self.current_throttle:.3f}")
+            
+            # --- FIX #2: Simplified and Corrected Re-acceleration Logic ---
+            # The key is to prioritize accelerating over cruising. Any strong throttle input
+            # from a coast should be considered acceleration.
+            if self.current_throttle >= 0.85: # A more generous threshold to re-engage
+                if self.state != "ACCELERATING": 
+                    print(f"\nM4 Back to Accelerating (from decel) - throttle: {self.current_throttle:.3f}")
                 self.state = "ACCELERATING"
-                # Stop downshift and start acceleration
                 self.sm.stop_long_sequence(fade_ms=100)
                 time.sleep(0.05)
                 self.sm.play_long_sequence('accel_gears', start_offset=M4_ACCELERATION_SOUND_OFFSET, transition_from_other=False)
                 self.played_full_accel_sequence_recently = True
-            elif self.current_throttle >= 0.85 and not self.sm.transitioning_long_sound:
-                if self.state != "CRUISING": print("\nM4 Back to Cruising (from decel)...")
-                self.state = "CRUISING"
-                # FIX: Use stop-then-play instead of crossfade to prevent audio overload
-                self.sm.stop_long_sequence(fade_ms=100)  # Quick fade out
-                time.sleep(0.05)  # Brief pause to let fade complete
-                self.sm.play_long_sequence('cruising', loops=-1, transition_from_other=False)
-                self.played_full_accel_sequence_recently = True
             elif not self.sm.is_long_sequence_busy() and not self.sm.transitioning_long_sound:
-                if self.state != "IDLING": print("\nM4 Back to Idling (from decel end).")
+                # This only runs if the throttle is LOW and the deceleration sound has finished playing.
+                if self.state != "IDLING": 
+                    print("\nM4 Back to Idling (from decel end).")
                 self.state = "IDLING"
                 self.sm.set_idle_target_volume(M4_NORMAL_IDLE_VOLUME)
                 if self.sm.sounds.get('idle'): self.sm.play_idle()
