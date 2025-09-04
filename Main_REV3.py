@@ -7,6 +7,8 @@ import signal
 import csv
 import datetime
 import collections # Added for deque
+import concurrent.futures
+import threading
 
 # Attempt to import Raspberry Pi specific ADC modules
 try:
@@ -44,7 +46,7 @@ THROTTLE_DEADZONE_LOW = 0.05
 THROTTLE_SMOOTHING_WINDOW_SIZE = 5
 
 # M4 specific parameters (preserved exactly from original)
-M4_SUSTAINED_100_THROTTLE_TIME = 1.5
+M4_SUSTAINED_100_THROTTLE_TIME = 1.0
 M4_GESTURE_WINDOW_TIME = 0.75
 M4_GESTURE_MAX_POINTS = 20
 M4_FADE_OUT_MS = 300
@@ -66,6 +68,7 @@ M4_LAUNCH_CONTROL_ENGAGE_VOL = 1.0
 M4_LAUNCH_CONTROL_HOLD_VOL = 1.0
 M4_GESTURE_RETRIGGER_LOCKOUT = 0.3 # Min time after any gesture (incl. new revs) before new one
 M4_ACCELERATION_SOUND_OFFSET = 0.5 # Seconds to skip at start of acceleration sounds to avoid silence
+M4_LAUNCH_ACCELERATION_SOUND_OFFSET = 1.0 # Launch control specific offset - skip quiet intro for punchy start
 
 # --- M4 Moving Average Parameters ---
 M4_RPM_IDLE = 800
@@ -216,6 +219,95 @@ def get_throttle_percentage_from_adc(raw_adc_value):
     percentage = (clamped_value - MIN_ADC_VALUE) / (MAX_ADC_VALUE - MIN_ADC_VALUE)
     return percentage
 
+class OptimizedSoundLoader:
+    def __init__(self, sound_path):
+        self.sound_path = sound_path
+        self.sounds = {}
+        self.load_times = {}
+    
+    def _load_sound_with_duration(self, filename):
+        """Load sound from WAV file with timing"""
+        path = os.path.join(self.sound_path, filename)
+        start_time = time.time()
+        
+        # Get file size for logging
+        file_size = 0
+        if os.path.exists(path):
+            try:
+                file_size = os.path.getsize(path)
+                file_size_mb = file_size / (1024 * 1024)
+                print(f"[LOADING] {filename} ({file_size_mb:.1f} MB)...")
+            except:
+                pass
+        
+        if os.path.exists(path):
+            try:
+                sound = pygame.mixer.Sound(path)
+                load_time = time.time() - start_time
+                return sound, sound.get_length(), load_time
+            except pygame.error as e:
+                load_time = time.time() - start_time
+                print(f"Error: Could not load '{filename}': {e}")
+                return None, 0, load_time
+        
+        load_time = time.time() - start_time
+        print(f"Error: Sound file not found: '{filename}' at '{path}'")
+        return None, 0, load_time
+    
+    def load_sounds_parallel(self, sound_files, max_workers=4):
+        """Load multiple sound files in parallel"""
+        print(f"Loading {len(sound_files)} sounds with {max_workers} threads...")
+        start_total = time.time()
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all loading tasks
+            future_to_filename = {
+                executor.submit(self._load_sound_with_duration, filename): filename 
+                for filename in sound_files
+            }
+            
+            # Collect results as they complete
+            for future in concurrent.futures.as_completed(future_to_filename):
+                filename = future_to_filename[future]
+                try:
+                    sound, duration, load_time = future.result()
+                    key = filename.replace('.wav', '')
+                    self.sounds[key] = sound
+                    self.load_times[key] = load_time
+                    
+                    # Get file size for completion report
+                    file_size_mb = 0
+                    try:
+                        path = os.path.join(self.sound_path, filename)
+                        if os.path.exists(path):
+                            file_size_mb = os.path.getsize(path) / (1024 * 1024)
+                    except:
+                        pass
+                    
+                    # Flag slow files for attention
+                    slow_flag = " [SLOW]" if load_time > 5.0 else ""
+                    print(f"  ✓ {filename} ({load_time:.3f}s, {file_size_mb:.1f}MB){slow_flag}")
+                except Exception as e:
+                    print(f"  ✗ {filename}: {e}")
+        
+        total_time = time.time() - start_total
+        successful_loads = len([s for s in self.sounds.values() if s is not None])
+        
+        print(f"Parallel Loading Summary:")
+        print(f"   ✓ Successfully loaded: {successful_loads}/{len(sound_files)} sounds")
+        print(f"   ⏱️  Total time: {total_time:.2f}s")
+        print(f"   ⚡ Average per file: {total_time/len(sound_files):.3f}s")
+        
+        # Identify slowest files for optimization analysis
+        slow_files = [(key, time_val) for key, time_val in self.load_times.items() if time_val > 3.0]
+        if slow_files:
+            slow_files.sort(key=lambda x: x[1], reverse=True)
+            print(f"   🐌 Slowest files:")
+            for key, load_time in slow_files[:3]:  # Show top 3
+                print(f"      • {key}.wav: {load_time:.1f}s")
+        
+        return self.sounds
+
 class M4SoundManager:
     def __init__(self):
         self.sounds = {}
@@ -261,28 +353,57 @@ class M4SoundManager:
         return None, 0
 
     def load_sounds(self):
-        self.sounds['idle'], _ = self._load_sound_with_duration("engine_idle_loop.wav")
-
-        # New Staged Rev Sounds
-        # Each stage: key, sound object, peak RPM it represents, duration
-        snd, dur = self._load_sound_with_duration("engine_rev_stage1.wav") # Idle to ~3k RPM
-        self.rev_stages.append({'key': 'rev_stage1', 'sound': snd, 'rpm_peak': 3000, 'duration': dur})
-        snd, dur = self._load_sound_with_duration("engine_rev_stage2.wav") # ~3k to ~5k RPM
-        self.rev_stages.append({'key': 'rev_stage2', 'sound': snd, 'rpm_peak': 5000, 'duration': dur})
-        snd, dur = self._load_sound_with_duration("engine_rev_stage3.wav") # ~5k to ~7k RPM
-        self.rev_stages.append({'key': 'rev_stage3', 'sound': snd, 'rpm_peak': 7000, 'duration': dur})
-        snd, dur = self._load_sound_with_duration("engine_rev_stage4.wav") # ~7k to Redline (e.g. previous rev_limiter sound)
-        self.rev_stages.append({'key': 'rev_stage4', 'sound': snd, 'rpm_peak': 8500, 'duration': dur})
-
-        self.sounds['turbo_bov'], _ = self._load_sound_with_duration("turbo_spool_and_bov.wav")
-        self.sounds['rev_limiter'], _ = self._load_sound_with_duration("engine_high_rev_with_limiter.wav") # Still available if needed elsewhere
+        print("M4 Sound Manager: Loading sounds with parallel optimization...")
         
-        self.sounds['accel_gears'], _ = self._load_sound_with_duration("acceleration_gears_1_to_4.wav")
-        self.sounds['cruising'], _ = self._load_sound_with_duration("engine_cruising_loop.wav")
-        self.sounds['decel_downshifts'], _ = self._load_sound_with_duration("deceleration_downshifts_to_idle.wav")
-        self.sounds['starter'], _ = self._load_sound_with_duration("engine_starter.wav")
-        self.sounds['launch_control_engage'], _ = self._load_sound_with_duration("launch_control_engage.wav")
-        self.sounds['launch_control_hold_loop'], _ = self._load_sound_with_duration("launch_control_hold_loop.wav")
+        # Define all sound files to load
+        sound_files = [
+            "engine_idle_loop.wav",
+            "engine_rev_stage1.wav",
+            "engine_rev_stage2.wav", 
+            "engine_rev_stage3.wav",
+            "engine_rev_stage4.wav",
+            "turbo_spool_and_bov.wav",
+            "engine_high_rev_with_limiter.wav",
+            "acceleration_gears_1_to_4.wav",
+            "engine_cruising_loop.wav",
+            "deceleration_downshifts_to_idle.wav",
+            "engine_starter.wav",
+            "launch_control_engage.wav",
+            "launch_control_hold_loop.wav"
+        ]
+        
+        # Load all sounds in parallel
+        loader = OptimizedSoundLoader(M4_SOUND_FILES_PATH)
+        loaded_sounds = loader.load_sounds_parallel(sound_files, max_workers=4)
+        
+        # Map loaded sounds to class structure
+        self.sounds['idle'] = loaded_sounds.get('engine_idle_loop')
+        self.sounds['turbo_bov'] = loaded_sounds.get('turbo_spool_and_bov')
+        self.sounds['rev_limiter'] = loaded_sounds.get('engine_high_rev_with_limiter')
+        self.sounds['accel_gears'] = loaded_sounds.get('acceleration_gears_1_to_4')
+        self.sounds['cruising'] = loaded_sounds.get('engine_cruising_loop')
+        self.sounds['decel_downshifts'] = loaded_sounds.get('deceleration_downshifts_to_idle')
+        self.sounds['starter'] = loaded_sounds.get('engine_starter')
+        self.sounds['launch_control_engage'] = loaded_sounds.get('launch_control_engage')
+        self.sounds['launch_control_hold_loop'] = loaded_sounds.get('launch_control_hold_loop')
+        
+        # Set up staged rev sounds with duration calculation
+        rev_stage_files = ['engine_rev_stage1', 'engine_rev_stage2', 'engine_rev_stage3', 'engine_rev_stage4']
+        rpm_peaks = [3000, 5000, 7000, 8500]
+        
+        for i, stage_key in enumerate(rev_stage_files):
+            sound = loaded_sounds.get(stage_key)
+            if sound:
+                duration = sound.get_length() if sound else 0
+                self.rev_stages.append({
+                    'key': f'rev_stage{i+1}', 
+                    'sound': sound, 
+                    'rpm_peak': rpm_peaks[i], 
+                    'duration': duration
+                })
+        
+        successful_loads = len([s for s in self.sounds.values() if s is not None]) + len(self.rev_stages)
+        print(f"M4: Optimized loading complete. {successful_loads} sounds ready.")
 
     def get_sound_name_from_obj(self, sound_obj):
         if sound_obj is None: return "None"
@@ -644,90 +765,106 @@ class SupraSoundManager:
         return None, 0
 
     def load_sounds(self):
-        # Core sounds (essential for basic functionality)
-        essential_sounds = [
-            ('idle', "supra_idle_loop.wav"),
-            ('startup', "supra_startup.wav")
+        print("Supra Sound Manager: Loading sounds with parallel optimization...")
+        
+        # Define all sound files to load
+        sound_files = [
+            # Essential sounds
+            "supra_idle_loop.wav",
+            "supra_startup.wav",
+            # Light pulls and cruising sounds (10-30% throttle)
+            "light_pull_1.wav",
+            "light_pull_2.wav",
+            "light_cruise_1.wav",
+            "light_cruise_2.wav",
+            "light_cruise_3.wav",
+            # Aggressive pushes (31-60% throttle)
+            "aggressive_push_1.wav",
+            "aggressive_push_2.wav",
+            "aggressive_push_3.wav",
+            "aggressive_push_4.wav",
+            "aggressive_push_5.wav",
+            "aggressive_push_6.wav",
+            # Violent pulls (61-100% throttle)
+            "violent_pull_1.wav",
+            "violent_pull_2.wav",
+            "violent_pull_3.wav",
+            # Highway cruise
+            "highway_cruise_loop.wav",
+            # Staged rev sounds
+            "supra_rev_stage1.wav",
+            "supra_rev_stage2.wav",
+            "supra_rev_stage3.wav",
+            "supra_rev_stage4.wav",
+            # Original rev sounds as fallback
+            "supra_rev_1.wav",
+            "supra_rev_2.wav",
+            "supra_rev_3.wav"
         ]
         
-        # Load essential sounds and track failures
-        missing_essential = []
-        for key, filename in essential_sounds:
-            self.sounds[key], _ = self._load_sound_with_duration(filename)
-            if self.sounds[key] is None:
-                missing_essential.append(filename)
+        # Load all sounds in parallel (use more threads due to more files)
+        loader = OptimizedSoundLoader(SUPRA_SOUND_FILES_PATH)
+        loaded_sounds = loader.load_sounds_parallel(sound_files, max_workers=6)
         
+        # Map loaded sounds to class structure
+        # Essential sounds
+        self.sounds['idle'] = loaded_sounds.get('supra_idle_loop')
+        self.sounds['startup'] = loaded_sounds.get('supra_startup')
+        
+        # Check for missing essential sounds
+        essential_files = ['supra_idle_loop', 'supra_startup']
+        missing_essential = [f for f in essential_files if not loaded_sounds.get(f)]
         if missing_essential:
-            print(f"SUPRA CRITICAL ERROR: Missing essential sound files: {missing_essential}")
+            print(f"SUPRA CRITICAL ERROR: Missing essential sound files: {[f+'.wav' for f in missing_essential]}")
             print("Supra functionality will be severely impacted!")
         
-        # Light pulls and cruising sounds (10-30% throttle)
-        light_sounds = [
-            ('light_pull_1', "light_pull_1.wav"),
-            ('light_pull_2', "light_pull_2.wav"),
-            ('light_cruise_1', "light_cruise_1.wav"),
-            ('light_cruise_2', "light_cruise_2.wav"),
-            ('light_cruise_3', "light_cruise_3.wav")
-        ]
+        # Light pulls and cruising sounds
+        self.sounds['light_pull_1'] = loaded_sounds.get('light_pull_1')
+        self.sounds['light_pull_2'] = loaded_sounds.get('light_pull_2')
+        self.sounds['light_cruise_1'] = loaded_sounds.get('light_cruise_1')
+        self.sounds['light_cruise_2'] = loaded_sounds.get('light_cruise_2')
+        self.sounds['light_cruise_3'] = loaded_sounds.get('light_cruise_3')
         
-        for key, filename in light_sounds:
-            self.sounds[key], _ = self._load_sound_with_duration(filename)
+        # Aggressive pushes
+        for i in range(1, 7):
+            self.sounds[f'aggressive_push_{i}'] = loaded_sounds.get(f'aggressive_push_{i}')
         
-        # Aggressive pushes (31-60% throttle)
-        aggressive_sounds = [
-            ('aggressive_push_1', "aggressive_push_1.wav"),
-            ('aggressive_push_2', "aggressive_push_2.wav"),
-            ('aggressive_push_3', "aggressive_push_3.wav"),
-            ('aggressive_push_4', "aggressive_push_4.wav"),
-            ('aggressive_push_5', "aggressive_push_5.wav"),
-            ('aggressive_push_6', "aggressive_push_6.wav")
-        ]
+        # Violent pulls
+        for i in range(1, 4):
+            self.sounds[f'violent_pull_{i}'] = loaded_sounds.get(f'violent_pull_{i}')
         
-        for key, filename in aggressive_sounds:
-            self.sounds[key], _ = self._load_sound_with_duration(filename)
+        # Highway cruise
+        self.sounds['highway_cruise_loop'] = loaded_sounds.get('highway_cruise_loop')
         
-        # Violent pulls (61-100% throttle)
-        violent_sounds = [
-            ('violent_pull_1', "violent_pull_1.wav"),
-            ('violent_pull_2', "violent_pull_2.wav"),
-            ('violent_pull_3', "violent_pull_3.wav")
-        ]
+        # Original rev sounds
+        for i in range(1, 4):
+            self.sounds[f'rev_{i}'] = loaded_sounds.get(f'supra_rev_{i}')
         
-        for key, filename in violent_sounds:
-            self.sounds[key], _ = self._load_sound_with_duration(filename)
-        
-        # Highway cruise (optional)
-        self.sounds['highway_cruise_loop'], _ = self._load_sound_with_duration("highway_cruise_loop.wav")
-        
-        # ENHANCED: Better categorization (from simulator)
+        # Set up categorization (from simulator)
         self.light_pull_sounds = ['light_pull_1', 'light_pull_2']
         self.light_cruise_sounds = ['light_cruise_1', 'light_cruise_2', 'light_cruise_3']
         self.aggressive_push_sounds = ['aggressive_push_1', 'aggressive_push_2', 'aggressive_push_3', 
                                       'aggressive_push_4', 'aggressive_push_5', 'aggressive_push_6']
         self.violent_pull_sounds = ['violent_pull_1', 'violent_pull_2', 'violent_pull_3']
         
-        # ENHANCED: Staged Rev Sounds (NEW from simulator, adapted from M4 approach)
+        # Set up staged rev sounds with duration calculation
         self.rev_stages = []
-        snd, dur = self._load_sound_with_duration("supra_rev_stage1.wav")
-        self.rev_stages.append({'key': 'supra_rev_stage1', 'sound': snd, 'rpm_peak': 3500, 'duration': dur})
-        snd, dur = self._load_sound_with_duration("supra_rev_stage2.wav")
-        self.rev_stages.append({'key': 'supra_rev_stage2', 'sound': snd, 'rpm_peak': 5500, 'duration': dur})
-        snd, dur = self._load_sound_with_duration("supra_rev_stage3.wav")
-        self.rev_stages.append({'key': 'supra_rev_stage3', 'sound': snd, 'rpm_peak': 7500, 'duration': dur})
-        snd, dur = self._load_sound_with_duration("supra_rev_stage4.wav")
-        self.rev_stages.append({'key': 'supra_rev_stage4', 'sound': snd, 'rpm_peak': 9000, 'duration': dur})
+        rev_stage_files = ['supra_rev_stage1', 'supra_rev_stage2', 'supra_rev_stage3', 'supra_rev_stage4']
+        rpm_peaks = [3500, 5500, 7500, 9000]
         
-        # Keep original rev sounds as fallback
-        rev_sounds = [
-            ('rev_1', "supra_rev_1.wav"),
-            ('rev_2', "supra_rev_2.wav"),
-            ('rev_3', "supra_rev_3.wav")
-        ]
+        for i, stage_key in enumerate(rev_stage_files):
+            sound = loaded_sounds.get(stage_key)
+            if sound:
+                duration = sound.get_length() if sound else 0
+                self.rev_stages.append({
+                    'key': f'supra_rev_stage{i+1}', 
+                    'sound': sound, 
+                    'rpm_peak': rpm_peaks[i], 
+                    'duration': duration
+                })
         
-        for key, filename in rev_sounds:
-            self.sounds[key], _ = self._load_sound_with_duration(filename)
-        
-        print(f"SUPRA: Sound loading complete. Total sounds loaded: {len([s for s in self.sounds.values() if s is not None])}")
+        successful_loads = len([s for s in self.sounds.values() if s is not None])
+        print(f"SUPRA: Optimized loading complete. {successful_loads} sounds loaded + {len(self.rev_stages)} rev stages ready.")
 
     def get_sound_name_from_obj(self, sound_obj):
         if sound_obj is None:
@@ -1086,27 +1223,59 @@ class HellcatSoundManager:
         return None, 0
 
     def load_sounds(self):
+        print("Hellcat Sound Manager: Loading sounds with parallel optimization...")
+        
+        # Define all sound files to load
+        sound_files = [
+            # Foundation Layer sounds
+            "hellcat_idle_loop.wav",
+            "hellcat_rumble_low_rpm_loop.wav",
+            "hellcat_rumble_mid_rpm_loop.wav",
+            "hellcat_whine_low_rpm_loop.wav",
+            "hellcat_whine_high_rpm_loop.wav",
+            # Character Layer sounds
+            "hellcat_exhaust_roar.wav",
+            "hellcat_decel_burble.wav",
+            # SFX Layer sounds
+            "hellcat_startup_roar.wav",
+            "hellcat_upshift_bark.wav",
+            "hellcat_downshift_revmatch1.wav",
+            "hellcat_downshift_revmatch2.wav",
+            # Rev sounds (simple system)
+            "hellcat_rev_1.wav",
+            "hellcat_rev_2.wav",
+            "hellcat_rev_3.wav"
+        ]
+        
+        # Load all sounds in parallel
+        loader = OptimizedSoundLoader(HELLCAT_SOUND_FILES_PATH)
+        loaded_sounds = loader.load_sounds_parallel(sound_files, max_workers=4)
+        
+        # Map loaded sounds to class structure
         # Foundation Layer sounds
-        self.sounds['idle'], _ = self._load_sound_with_duration("hellcat_idle_loop.wav")
-        self.sounds['rumble_low'], _ = self._load_sound_with_duration("hellcat_rumble_low_rpm_loop.wav")
-        self.sounds['rumble_mid'], _ = self._load_sound_with_duration("hellcat_rumble_mid_rpm_loop.wav")
-        self.sounds['whine_low'], _ = self._load_sound_with_duration("hellcat_whine_low_rpm_loop.wav")
-        self.sounds['whine_high'], _ = self._load_sound_with_duration("hellcat_whine_high_rpm_loop.wav")
+        self.sounds['idle'] = loaded_sounds.get('hellcat_idle_loop')
+        self.sounds['rumble_low'] = loaded_sounds.get('hellcat_rumble_low_rpm_loop')
+        self.sounds['rumble_mid'] = loaded_sounds.get('hellcat_rumble_mid_rpm_loop')
+        self.sounds['whine_low'] = loaded_sounds.get('hellcat_whine_low_rpm_loop')
+        self.sounds['whine_high'] = loaded_sounds.get('hellcat_whine_high_rpm_loop')
         
         # Character Layer sounds
-        self.sounds['exhaust_roar'], _ = self._load_sound_with_duration("hellcat_exhaust_roar.wav")
-        self.sounds['decel_burble'], _ = self._load_sound_with_duration("hellcat_decel_burble.wav")
+        self.sounds['exhaust_roar'] = loaded_sounds.get('hellcat_exhaust_roar')
+        self.sounds['decel_burble'] = loaded_sounds.get('hellcat_decel_burble')
         
         # SFX Layer sounds
-        self.sounds['startup'], _ = self._load_sound_with_duration("hellcat_startup_roar.wav")
-        self.sounds['upshift'], _ = self._load_sound_with_duration("hellcat_upshift_bark.wav")
-        self.sounds['downshift_1'], _ = self._load_sound_with_duration("hellcat_downshift_revmatch1.wav")
-        self.sounds['downshift_2'], _ = self._load_sound_with_duration("hellcat_downshift_revmatch2.wav")
+        self.sounds['startup'] = loaded_sounds.get('hellcat_startup_roar')
+        self.sounds['upshift'] = loaded_sounds.get('hellcat_upshift_bark')
+        self.sounds['downshift_1'] = loaded_sounds.get('hellcat_downshift_revmatch1')
+        self.sounds['downshift_2'] = loaded_sounds.get('hellcat_downshift_revmatch2')
         
         # Rev sounds (simple system)
-        self.sounds['rev_1'], _ = self._load_sound_with_duration("hellcat_rev_1.wav")
-        self.sounds['rev_2'], _ = self._load_sound_with_duration("hellcat_rev_2.wav")
-        self.sounds['rev_3'], _ = self._load_sound_with_duration("hellcat_rev_3.wav")
+        self.sounds['rev_1'] = loaded_sounds.get('hellcat_rev_1')
+        self.sounds['rev_2'] = loaded_sounds.get('hellcat_rev_2')
+        self.sounds['rev_3'] = loaded_sounds.get('hellcat_rev_3')
+        
+        successful_loads = len([s for s in self.sounds.values() if s is not None])
+        print(f"HELLCAT: Optimized loading complete. {successful_loads} sounds ready.")
 
     def set_idle_target_volume(self, target_volume, instant=False):
         target_volume = max(0.0, min(1.0, target_volume))
@@ -1726,22 +1895,23 @@ class M4EngineSimulation:
         elif self.state == "LAUNCH_HOLD":
             self.sm.set_idle_target_volume(M4_VERY_LOW_IDLE_VOLUME_DURING_LAUNCH, instant=True)
             
-            # --- FIX #1: Corrected Launch Hold Exit Logic ---
-            if self.current_throttle >= 0.98:
+            # --- FIX #1: Improved Launch Hold Exit Logic ---
+            # Priority 1: High throttle = LAUNCH (80%+ triggers immediate acceleration)
+            if self.current_throttle >= 0.80:
                 # This is a LAUNCH - go directly to ACCELERATING
-                print("\nM4 Launching!")
+                print(f"\nM4 Launching! (throttle: {self.current_throttle:.2f})")
                 self.state = "ACCELERATING"
                 self.sm.stop_launch_control_sequence(fade_ms=0) 
                 self.sm.set_idle_target_volume(0.0, instant=True)
-                self.sm.play_long_sequence('accel_gears', start_offset=M4_ACCELERATION_SOUND_OFFSET)
+                self.sm.play_long_sequence('accel_gears', start_offset=M4_LAUNCH_ACCELERATION_SOUND_OFFSET)
                 self.played_full_accel_sequence_recently = True
                 self.simulated_rpm = M4_RPM_IDLE 
                 self.last_rev_sound_finish_time = current_time
-            elif not (M4_LAUNCH_CONTROL_THROTTLE_MIN < self.current_throttle < M4_LAUNCH_CONTROL_THROTTLE_MAX) or \
-                 not self.sm.is_launch_control_active():
-                # This is a DISENGAGE (by letting go of throttle) - only go to IDLING if throttle is low
+            # Priority 2: Low throttle = DISENGAGE (only if throttle drops significantly)
+            elif self.current_throttle < M4_LAUNCH_CONTROL_THROTTLE_MIN or not self.sm.is_launch_control_active():
+                # This is a DISENGAGE (by letting go of throttle)
                 if self.sm.is_launch_control_active():
-                    print("\nM4 Launch Control Disengaged.")
+                    print(f"\nM4 Launch Control Disengaged. (throttle dropped to {self.current_throttle:.2f})")
                 self.state = "IDLING"
                 self.sm.stop_launch_control_sequence()
                 self.sm.set_idle_target_volume(M4_NORMAL_IDLE_VOLUME)
@@ -1749,6 +1919,7 @@ class M4EngineSimulation:
                 self.time_in_idle = 0.0
                 self.simulated_rpm = M4_RPM_IDLE
                 self.last_rev_sound_finish_time = current_time
+            # Priority 3: Stay in launch control (55-85% range maintained)
 
         elif self.state == "ACCELERATING":
             self.sm.set_idle_target_volume(0.0, instant=True)
@@ -2395,14 +2566,19 @@ class TripleCarSystem:
 
     def switch_car(self):
         if self.switching_cars:
+            print(f"Switch already in progress, ignoring request (current: {self.current_car})")
             return
         
-        # Cycle to next car
-        self.current_car_index = (self.current_car_index + 1) % len(self.cars)
-        new_car = self.cars[self.current_car_index]
+        old_car_index = self.current_car_index
         old_car = self.current_car
         
-        print(f"\nSwitching from {old_car} to {new_car}...")
+        # Cycle to next car (circular: M4 -> Supra -> Hellcat -> M4)
+        self.current_car_index = (self.current_car_index + 1) % len(self.cars)
+        new_car = self.cars[self.current_car_index]
+        
+        print(f"\nCAR SWITCH: {old_car} (index {old_car_index}) -> {new_car} (index {self.current_car_index})")
+        print(f"Available cars: {self.cars}")
+        
         self.switching_cars = True
         self.switch_start_time = time.time()
         
@@ -2411,8 +2587,10 @@ class TripleCarSystem:
             self.m4_sound_manager.fade_out_all_sounds(SUPRA_CROSSFADE_DURATION_MS)
         elif old_car == "Supra":
             self.supra_sound_manager.fade_out_all_sounds(SUPRA_CROSSFADE_DURATION_MS)
-        else:  # Hellcat
+        elif old_car == "Hellcat":  # More explicit condition
             self.hellcat_sound_manager.fade_out_all_sounds(SUPRA_CROSSFADE_DURATION_MS)
+        else:
+            print(f"WARNING: Unknown car '{old_car}' - no fadeout applied")
 
     def update(self, dt, raw_throttle):
         self.throttle_buffer.append(raw_throttle)
@@ -2423,29 +2601,34 @@ class TripleCarSystem:
         # Handle car switching
         if self.switching_cars:
             if current_time - self.switch_start_time >= (SUPRA_CROSSFADE_DURATION_MS / 1000.0):
-                # Switch is complete
-                if self.current_car == "M4":
-                    self.m4_sound_manager.stop_all_sounds()
-                elif self.current_car == "Supra":
-                    self.supra_sound_manager.stop_all_sounds()
-                else:  # Hellcat
-                    self.hellcat_sound_manager.stop_all_sounds()
+                # Get the old car before switching
+                old_car = self.current_car
                 
                 # Switch to new car
                 self.current_car = self.cars[self.current_car_index]
+                
+                # Stop old car's sounds
+                if old_car == "M4":
+                    self.m4_sound_manager.stop_all_sounds()
+                elif old_car == "Supra":
+                    self.supra_sound_manager.stop_all_sounds()
+                elif old_car == "Hellcat":
+                    self.hellcat_sound_manager.stop_all_sounds()
                 
                 # Reset new car's engine state
                 if self.current_car == "M4":
                     self.m4_engine.state = "ENGINE_OFF"
                 elif self.current_car == "Supra":
                     self.supra_engine.state = "ENGINE_OFF"
-                else:  # Hellcat
+                elif self.current_car == "Hellcat":
                     self.hellcat_engine.state = "ENGINE_OFF"
                     self.hellcat_engine.simulated_rpm = HELLCAT_IDLE_RPM
                     self.hellcat_engine.simulated_gear = 1
                     self.hellcat_engine.last_shift_time = 0.0
+                else:
+                    print(f"WARNING: Unknown new car '{self.current_car}' during switch")
                 
-                print(f"Switched to {self.current_car}")
+                print(f"SWITCH COMPLETE: Now using {self.current_car} (index {self.current_car_index})")
                 self.switching_cars = False
             else:
                 return smoothed_throttle, raw_throttle
