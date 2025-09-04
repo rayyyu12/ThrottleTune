@@ -572,7 +572,7 @@ class M4SoundManager:
             if not self.channel_turbo_limiter_sfx.get_busy() or \
                (current_sfx_sound != lc_engage and current_sfx_sound != lc_hold):
                 self.channel_turbo_limiter_sfx.stop()
-                self.channel_turbo_limiter_sfx.set_volume(MASTER_ENGINE_VOL)
+                self.channel_turbo_limiter_sfx.set_volume(M4_NORMAL_IDLE_VOLUME * MASTER_ENGINE_VOL)
                 self.channel_turbo_limiter_sfx.play(sound_to_play)
                 return True
         return False
@@ -1131,7 +1131,7 @@ class SupraSoundManager:
         if startup_sound:
             # Use rev sfx channel for startup
             self.channel_rev_sfx.stop()
-            self.channel_rev_sfx.set_volume(MASTER_ENGINE_VOL)
+            self.channel_rev_sfx.set_volume(SUPRA_NORMAL_IDLE_VOLUME * MASTER_ENGINE_VOL)
             self.channel_rev_sfx.play(startup_sound)
             return True
         return False
@@ -1617,7 +1617,7 @@ class HellcatSoundManager:
         startup_sound = self.sounds.get('startup')
         if startup_sound:
             self.channel_startup.stop()
-            self.channel_startup.set_volume(MASTER_ENGINE_VOL)
+            self.channel_startup.set_volume(HELLCAT_NORMAL_IDLE_VOLUME * MASTER_ENGINE_VOL)
             self.channel_startup.play(startup_sound)
             return True
         return False
@@ -1683,6 +1683,7 @@ class HellcatSoundManager:
     
     def _process_rev_queue(self):
         """Process queued rev sounds when channel becomes free"""
+        # SAFETY CHECK: Only process queue if not idle to prevent phantom revs
         if not self.channel_shift_sfx.get_busy() and self.rev_queue:
             next_rev = self.rev_queue.pop(0)  # Remove first item from queue
             self._play_rev_now(next_rev)
@@ -2378,9 +2379,12 @@ class HellcatEngineSimulation:
             self._handle_driving_state(current_time, dt)
 
         # Always update foundation layer when engine is running
+        # OPTIMIZATION: Reduce audio complexity during rapid throttle changes to prevent distortion
         if self.state not in ["ENGINE_OFF", "STARTING"]:
+            # Skip character layer during rapid throttle changes to reduce Pi load
+            if abs(self.engine_load) < 0.3:  # Only during stable throttle conditions
+                self.sm.play_character_layer(self.engine_load, self.simulated_rpm, self.smoothed_throttle)
             self.sm.play_foundation_layer(self.smoothed_throttle, self.simulated_rpm)
-            self.sm.play_character_layer(self.engine_load, self.simulated_rpm, self.smoothed_throttle)
 
     def _handle_idle_state(self, current_time, dt):
         """ENHANCED: Handle IDLE state with simple rev gesture support"""
@@ -2403,12 +2407,6 @@ class HellcatEngineSimulation:
 
     def _handle_driving_state(self, current_time, dt):
         """Handle DRIVING state with virtual engine physics"""
-        # Check if we should return to idle
-        if self.smoothed_throttle <= HELLCAT_THROTTLE_IDLE_THRESHOLD:
-            print("\nHellcat DRIVING -> IDLE")
-            self.state = "IDLE"
-            self.sm.set_idle_target_volume(HELLCAT_NORMAL_IDLE_VOLUME)
-            return
         
         # ENHANCED: Virtual RPM physics tuned for electric scooter operation
         if self.smoothed_throttle > HELLCAT_THROTTLE_IDLE_THRESHOLD:
@@ -2498,16 +2496,36 @@ class HellcatEngineSimulation:
         # Restore idle volume after shift events
         if not self.sm.is_shift_busy():
             self.sm.set_idle_target_volume(HELLCAT_NORMAL_IDLE_VOLUME)
+        
+        # MOVED: Check if we should return to idle AFTER downshift logic executes
+        if self.smoothed_throttle <= HELLCAT_THROTTLE_IDLE_THRESHOLD and self.simulated_gear <= 1:
+            print("\nHellcat DRIVING -> IDLE (after downshift processing)")
+            self.state = "IDLE"
+            self.state_start_time = current_time  # Reset state timer for rev gesture lockout
+            self.sm.set_idle_target_volume(HELLCAT_NORMAL_IDLE_VOLUME)
+            # CRITICAL FIX: Clear rev queue and reset rev detection to prevent phantom revs
+            self.sm.clear_rev_queue()
+            self.in_simple_rev_gesture = False
+            self.rev_lockout_until = current_time + 1.0  # Extra lockout after state transition
+            return
     
     def _check_simple_rev_gestures(self, current_time):
         """SIMPLE: Rev gesture detection for Hellcat (much simpler than Supra)"""
-        # Only check for revs when idling
-        if self.state != "IDLE":
+        # Only check for revs when idling AND not during state transitions
+        if self.state != "IDLE" or current_time - self.state_start_time < 0.5:
             self.in_simple_rev_gesture = False
+            # Clear any queued revs during non-idle states
+            if self.state != "IDLE":
+                self.sm.clear_rev_queue()
             return
         
         # Start rev gesture detection
         if not self.in_simple_rev_gesture and current_time >= self.rev_lockout_until:
+            # ENHANCED: Only detect revs if we've been stable in IDLE state (prevent transition false positives)
+            stable_idle_time = current_time - self.state_start_time
+            if stable_idle_time < 1.0:  # Wait 1 second after entering IDLE before allowing rev detection
+                return
+                
             # Looking for throttle rise from idle
             if (self.raw_throttle > HELLCAT_THROTTLE_IDLE_THRESHOLD * 2 and  # At least 10% throttle
                 self.previous_throttle <= HELLCAT_THROTTLE_IDLE_THRESHOLD * 1.5):  # Was at idle before
